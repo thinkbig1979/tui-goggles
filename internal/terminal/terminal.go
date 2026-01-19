@@ -363,17 +363,19 @@ func (t *Terminal) Screenshot() string {
 	return t.vt.String()
 }
 
-// ScreenshotWithCursor captures the screen and marks cursor position.
-func (t *Terminal) ScreenshotWithCursor() string {
+// ScreenshotWithCursor captures the screen along with cursor position info.
+// Returns: screen content, cursor column (0-indexed), cursor row (0-indexed), cursor visible.
+func (t *Terminal) ScreenshotWithCursor() (screen string, cursorCol, cursorRow int, cursorVisible bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Get the raw string representation
-	screen := t.vt.String()
+	screen = t.vt.String()
+	cursor := t.vt.Cursor()
+	cursorCol = cursor.X
+	cursorRow = cursor.Y
+	cursorVisible = t.vt.CursorVisible()
 
-	// Optionally, we could mark the cursor position here
-	// For now, just return the plain screen
-	return screen
+	return screen, cursorCol, cursorRow, cursorVisible
 }
 
 // SendKeys sends keystrokes to the running application.

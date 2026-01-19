@@ -21,6 +21,16 @@ go build -o bin/tui-goggles ./cmd/tui-goggles
 tui-goggles [flags] -- command [args...]
 ```
 
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success - capture completed, all assertions passed |
+| 1 | General error - invalid arguments, command failed to start |
+| 2 | Timeout - operation exceeded timeout |
+| 3 | Assertion failed - text specified with `-assert` was not found |
+| 4 | Command error - target command exited with non-zero status |
+
 ### Flags
 
 | Flag | Default | Description |
@@ -31,9 +41,19 @@ tui-goggles [flags] -- command [args...]
 | `-stable-timeout` | 5s | Timeout waiting for stable screen |
 | `-stable-time` | 200ms | Duration screen must be stable |
 | `-wait-for` | "" | Wait for this text to appear before capturing |
+| `-wait-stable` | false | Wait for screen to stabilize before capturing |
 | `-keys` | "" | Keys to send (space-separated) |
+| `-keys-stdin` | false | Read keys from stdin (one per line) |
+| `-input-delay` | 50ms | Delay between keystrokes |
 | `-format` | text | Output format: `text` or `json` |
+| `-output` | "" | Write output to file instead of stdout |
 | `-timeout` | 30s | Overall timeout for the operation |
+| `-assert` | | Assert text appears on screen (repeatable, exit 3 if not found) |
+| `-check` | | Check if text appears (repeatable, adds to JSON output, no exit change) |
+| `-capture-each` | false | Capture screen after each key (returns array in JSON mode) |
+| `-trim` | false | Trim trailing blank lines from output |
+| `-quiet` | false | Suppress output on success (useful with `-assert`) |
+| `-env` | | Set environment variable (format: KEY=VALUE, repeatable) |
 
 ### Examples
 
@@ -50,8 +70,35 @@ tui-goggles -keys "down down enter" -delay 1s -- ./my-tui-app
 # Wait for specific text before capturing
 tui-goggles -wait-for "Main Menu" -- ./my-tui-app
 
-# Get JSON output with metadata
-tui-goggles -format json -- ./my-tui-app
+# Assert expected text is present (for automated testing)
+tui-goggles -assert "Welcome" -assert "Login" -- ./my-tui-app
+
+# Quiet mode - only exit code matters (for CI/CD)
+tui-goggles -assert "Ready" -quiet -- ./my-tui-app
+
+# Check for text presence without failing (adds to JSON)
+tui-goggles -check "Error" -check "Warning" -format json -- ./my-tui-app
+
+# Capture each step of navigation (returns array of screens)
+tui-goggles -keys "down enter" -capture-each -format json -- ./my-tui-app
+
+# Get clean JSON output with cursor position and timing
+tui-goggles -format json -trim -- ./my-tui-app
+
+# Read keys from stdin for complex sequences
+echo -e "down\ndown\nenter" | tui-goggles -keys-stdin -- ./my-tui-app
+
+# Control keystroke timing for slow apps
+tui-goggles -keys "down enter" -input-delay 200ms -- ./my-tui-app
+
+# Save output to file
+tui-goggles -output screenshot.txt -- ./my-tui-app
+
+# Pass environment variables to the command
+tui-goggles -env "TERM=dumb" -env "NO_COLOR=1" -- ./my-tui-app
+
+# Wait for screen to stabilize before capturing
+tui-goggles -wait-stable -- ./my-tui-app
 
 # Use with piped input (e.g., fzf)
 echo -e "apple\nbanana\ncherry" | tui-goggles -delay 500ms -- fzf
@@ -66,6 +113,42 @@ For the `-keys` flag, use these names (space-separated):
 - **Function keys**: `f1` through `f12`
 - **Ctrl combinations**: `ctrl-a` through `ctrl-z`
 - **Literal text**: Any other string is sent as-is
+
+### JSON Output Format
+
+Single capture (`-format json`):
+```json
+{
+  "screen": "...",
+  "cols": 80,
+  "rows": 24,
+  "cursor_row": 0,
+  "cursor_col": 0,
+  "cursor_visible": true,
+  "timestamp": "2024-01-15T10:30:00Z",
+  "command": "my-app --flag",
+  "checks": {"Login": true, "Error": false},
+  "timing": {
+    "total_ms": 1250,
+    "delay_ms": 500,
+    "stabilize_ms": 200,
+    "wait_for_text_ms": 350,
+    "keys_ms": 200
+  }
+}
+```
+
+Multi-capture (`-format json -capture-each`):
+```json
+{
+  "captures": [
+    {"screen": "...", "cursor_row": 0, "cursor_col": 0, ...},
+    {"screen": "...", "cursor_row": 1, "cursor_col": 0, ...}
+  ],
+  "command": "my-app --flag",
+  "timing": {...}
+}
+```
 
 ## How It Works
 
