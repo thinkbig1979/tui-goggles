@@ -7,6 +7,14 @@ description: Captures TUI (Text User Interface) application screens as clean tex
 
 Capture text-based screenshots of TUI applications by running them in a virtual terminal.
 
+## Binary Location
+
+This skill bundles `tui-goggles`. Use this path in all commands:
+
+```
+~/.claude/skills/tui-capture/bin/tui-goggles
+```
+
 ## What This Tool Does
 
 Runs a TUI application in a virtual terminal, processes all ANSI escape sequences, and returns a clean text grid of what would appear on screen. This allows inspection of TUI state without running interactively.
@@ -27,13 +35,13 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 
 ```bash
 # Capture a TUI app's initial screen
-tui-goggles -- ./my-tui-app
+~/.claude/skills/tui-capture/bin/tui-goggles -- ./my-tui-app
 
 # With custom terminal size
-tui-goggles -cols 120 -rows 40 -- ./my-tui-app
+~/.claude/skills/tui-capture/bin/tui-goggles -cols 120 -rows 40 -- ./my-tui-app
 
 # Wait for specific text before capturing
-tui-goggles -wait-for "Main Menu" -- ./my-tui-app
+~/.claude/skills/tui-capture/bin/tui-goggles -wait-for "Main Menu" -- ./my-tui-app
 ```
 
 ## Core Flags
@@ -56,10 +64,10 @@ Use `-keys` with space-separated key names:
 
 ```bash
 # Navigate down twice and press enter
-tui-goggles -keys "down down enter" -- ./my-tui-app
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "down down enter" -- ./my-tui-app
 
 # Type literal text
-tui-goggles -keys "h e l l o" -- ./my-tui-app
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "h e l l o" -- ./my-tui-app
 ```
 
 **Key names:**
@@ -73,48 +81,30 @@ tui-goggles -keys "h e l l o" -- ./my-tui-app
 
 ### Verify a menu appears correctly
 ```bash
-tui-goggles -wait-for "Select option" -delay 1s -- ./menu-app
+~/.claude/skills/tui-capture/bin/tui-goggles -wait-for "Select option" -delay 1s -- ./menu-app
 ```
 
 ### Navigate and capture result
 ```bash
-tui-goggles -keys "down down enter" -delay 500ms -- ./my-app
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "down down enter" -delay 500ms -- ./my-app
 ```
 
 ### Capture fzf selection list
 ```bash
-echo -e "apple\nbanana\ncherry" | tui-goggles -delay 500ms -- fzf
+echo -e "apple\nbanana\ncherry" | ~/.claude/skills/tui-capture/bin/tui-goggles -delay 500ms -- fzf
 ```
 
 ### Get JSON output with metadata
 ```bash
-tui-goggles -format json -- ./my-app
+~/.claude/skills/tui-capture/bin/tui-goggles -format json -- ./my-app
 ```
 
 JSON output includes: `screen`, `cols`, `rows`, `timestamp`, `command`
 
 ### Capture system tools
 ```bash
-tui-goggles -cols 120 -rows 40 -delay 1s -- htop
+~/.claude/skills/tui-capture/bin/tui-goggles -cols 120 -rows 40 -delay 1s -- htop
 ```
-
-## Prerequisites
-
-This skill requires `tui-goggles` to be installed. Check if available:
-
-```bash
-which tui-goggles || echo "tui-goggles not found"
-```
-
-**Install from source** (requires Go 1.21+):
-
-```bash
-git clone https://github.com/yourusername/tui-goggles.git
-cd tui-goggles
-go build -o /usr/local/bin/tui-goggles ./cmd/tui-goggles
-```
-
-If the binary is not in PATH, use the full path in commands.
 
 ## Use Cases
 
