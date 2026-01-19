@@ -1,5 +1,7 @@
 # TUI Goggles
 
+[![Built with Claude](https://img.shields.io/badge/Built%20with-Claude-blue)](https://claude.ai)
+
 A tool that allows LLMs and automated systems to "see" TUI (Text User Interface) applications by capturing their rendered output as clean text grids.
 
 ## Problem Solved
