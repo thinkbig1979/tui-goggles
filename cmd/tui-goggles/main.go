@@ -130,7 +130,7 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.stableTimeout, "stable-timeout", 5*time.Second, "Timeout waiting for stable screen")
 	flag.DurationVar(&cfg.stableTime, "stable-time", 200*time.Millisecond, "Duration screen must be stable")
 	flag.StringVar(&cfg.waitForText, "wait-for", "", "Wait for this text to appear before capturing")
-	flag.StringVar(&cfg.keys, "keys", "", "Keys to send (space-separated: 'down down enter' or literal: 'hello')")
+	flag.StringVar(&cfg.keys, "keys", "", "Keys to send, space-separated: key names ('down', 'shift+tab'), mouse ('click:3,0'), 'type:\"text\"', 'paste:\"text\"', or literal text")
 	flag.BoolVar(&cfg.keysStdin, "keys-stdin", false, "Read keys from stdin (one per line)")
 	flag.StringVar(&cfg.outputFormat, "format", "text", "Output format: text, json")
 	flag.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Overall timeout for the operation")
@@ -186,18 +186,11 @@ func run(command string, args []string, cfg config) int {
 	startTime := time.Now()
 	timing := &TimingInfo{}
 
-	// Read keys from stdin if requested
-	if cfg.keysStdin {
-		keys, err := readKeysFromStdin()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: reading keys from stdin: %v\n", err)
-			return ExitGeneralError
-		}
-		if cfg.keys != "" {
-			cfg.keys = cfg.keys + " " + keys
-		} else {
-			cfg.keys = keys
-		}
+	// Parse all key tokens up front so syntax errors fail before the app starts
+	actions, err := parseActions(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return ExitGeneralError
 	}
 
 	// Create terminal with environment variables
@@ -262,30 +255,21 @@ func run(command string, args []string, cfg config) int {
 	}
 
 	// Send keys if specified
-	if cfg.keys != "" {
+	if len(actions) > 0 {
 		keysStart := time.Now()
-		if cfg.captureEach {
-			// Send keys one at a time and capture after each
-			parts := strings.Split(cfg.keys, " ")
-			for _, part := range parts {
-				if part == "" {
-					continue
-				}
-				if err := sendToken(term, part); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					return ExitGeneralError
-				}
-				// Wait for screen to stabilize after key input
-				time.Sleep(cfg.inputDelay)
+		for _, action := range actions {
+			if err := sendAction(term, action); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: sending %q: %v\n", action.Token, err)
+				return ExitGeneralError
+			}
+			time.Sleep(cfg.inputDelay)
+			if cfg.captureEach {
+				// Wait for screen to stabilize after each input and capture it
 				_ = term.WaitForStable(cfg.stableTimeout, cfg.stableTime)
 				results = append(results, captureScreen(term, command, args, cfg, nil))
 			}
-		} else {
-			// Send all keys, then capture once
-			if err := sendKeys(term, cfg.keys, cfg.inputDelay); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: sending keys: %v\n", err)
-				return ExitGeneralError
-			}
+		}
+		if !cfg.captureEach {
 			// Wait for screen to stabilize after key input
 			time.Sleep(cfg.stableTime)
 		}
@@ -353,19 +337,40 @@ func run(command string, args []string, cfg config) int {
 	return ExitSuccess
 }
 
-func readKeysFromStdin() (string, error) {
-	var keys []string
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			keys = append(keys, line)
+// parseActions tokenizes and parses -keys and, with -keys-stdin, each line
+// of stdin.
+func parseActions(cfg config) ([]input.Action, error) {
+	var tokens []string
+	if cfg.keys != "" {
+		t, err := input.Tokenize(cfg.keys)
+		if err != nil {
+			return nil, fmt.Errorf("-keys: %w", err)
+		}
+		tokens = append(tokens, t...)
+	}
+	if cfg.keysStdin {
+		scanner := bufio.NewScanner(os.Stdin)
+		for line := 1; scanner.Scan(); line++ {
+			t, err := input.Tokenize(scanner.Text())
+			if err != nil {
+				return nil, fmt.Errorf("stdin line %d: %w", line, err)
+			}
+			tokens = append(tokens, t...)
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("reading keys from stdin: %w", err)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return "", err
+
+	actions := make([]input.Action, 0, len(tokens))
+	for _, tok := range tokens {
+		a, err := input.ParseToken(tok)
+		if err != nil {
+			return nil, fmt.Errorf("key %q: %w", tok, err)
+		}
+		actions = append(actions, a)
 	}
-	return strings.Join(keys, " "), nil
+	return actions, nil
 }
 
 func captureScreen(term *terminal.Terminal, command string, args []string, cfg config, timing *TimingInfo) CaptureResult {
@@ -448,31 +453,8 @@ func outputResult(result CaptureResult, multiResults []CaptureResult, cfg config
 	}
 }
 
-func sendKeys(term *terminal.Terminal, keys string, inputDelay time.Duration) error {
-	// Parse key specification
-	// Supports: "down down enter" or literal strings
-	parts := strings.Split(keys, " ")
-
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		if err := sendToken(term, part); err != nil {
-			return err
-		}
-		// Delay between keys
-		time.Sleep(inputDelay)
-	}
-
-	return nil
-}
-
-// sendToken parses one -keys token and sends it to the application.
-func sendToken(term *terminal.Terminal, tok string) error {
-	action, err := input.ParseToken(tok)
-	if err != nil {
-		return err
-	}
+// sendAction sends one parsed -keys token to the application.
+func sendAction(term *terminal.Terminal, action input.Action) error {
 	switch action.Kind {
 	case input.ActionMouse:
 		warnMouseMode(term, action)

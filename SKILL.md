@@ -136,8 +136,8 @@ Use `-keys` with space-separated tokens. Each token is a key specification or li
 # Navigate down twice and press enter
 ~/.claude/skills/tui-capture/bin/tui-goggles -keys "down down enter" -- ./my-tui-app
 
-# Type literal text: a token that is not a key name is sent as-is
-~/.claude/skills/tui-capture/bin/tui-goggles -keys "hello enter" -- ./my-tui-app
+# Type literal text: a token that is not a key name is sent as-is (use type: for spaces)
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "hello enter type:'two words'" -- ./my-tui-app
 
 # Modified keys
 ~/.claude/skills/tui-capture/bin/tui-goggles -keys "shift+tab alt+left ctrl+pgdn shift+up ctrl+home" -- ./my-tui-app
@@ -164,6 +164,27 @@ echo -e "down\ndown\nenter" | ~/.claude/skills/tui-capture/bin/tui-goggles -keys
 | `shift+<letter>` | Upper-case letter | `shift+a` = `A` |
 
 `m` = 1 + shift(1) + alt(2) + ctrl(4) + meta(8). Combinations with no legacy xterm encoding (`shift+enter`, `ctrl+tab`, `ctrl+shift+a`) are rejected with exit 1 rather than silently mis-sent. Note that `ctrl+m`, `ctrl+i` and `ctrl+[` send the same bytes as `enter`, `tab` and `esc`, so the app sees those keys.
+
+## Typing, Pasting and Escapes
+
+Tokens are split on spaces, so use `type:` for text with spaces and quote it. Double or single quotes group text and can sit inside a token:
+
+| Token | Sends |
+|-------|-------|
+| `type:"hello world"` | the text verbatim in one write, with no key-name parsing (`type:enter` types "enter") |
+| `paste:"some text"` | a bracketed paste: `\e[200~some text\e[201~` (Bubble Tea delivers one `PasteMsg`) |
+
+Backslash escapes work inside and outside quotes: `\t` tab, `\n` LF, `\r` CR, `\e` ESC, `\s` space, `\\` `\"` `\'`, `\xHH` any byte. So `type:a\tb` types a, Tab, b, and a bare `\e[1;3D` token sends a raw alt+left. Enter is `\r` (or the `enter` key); `\n` is Ctrl+J to most apps.
+
+```bash
+# Type a line with spaces, press Enter, paste two lines
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "type:'hello world' enter paste:\"line one\nline two\"" -- ./editor
+
+# With -keys-stdin, each line is tokenized separately (quotes cannot span lines)
+printf 'type:"x y"\npaste:"p q" enter\n' | ~/.claude/skills/tui-capture/bin/tui-goggles -keys-stdin -- ./editor
+```
+
+A quote that is never closed, or a bad `\x` escape, fails with exit 1 before the app starts.
 
 ## Mouse
 

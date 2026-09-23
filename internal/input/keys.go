@@ -264,6 +264,6 @@ func unencodable(mods int, key string) error {
 			names = append(names, n)
 		}
 	}
-	return fmt.Errorf("%s+%s has no legacy xterm encoding; send the raw sequence instead (e.g. raw:\\e[...)",
+	return fmt.Errorf("%s+%s has no legacy xterm encoding; send the raw sequence instead (e.g. type:\\e[...)",
 		strings.Join(names, "+"), key)
 }
