@@ -5,6 +5,7 @@ package input
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Modifier bits, as used in the xterm CSI modifier parameter (param = 1 + bits).
@@ -203,8 +204,11 @@ func encodeSimple(mods int, key, plain string) (string, bool, error) {
 	case key == "backspace" && rest == ModCtrl:
 		return prefix + "\x08", true, nil
 	}
-	return "", true, unencodable(mods, key)
+	return "", true, unencodable(mods, key, simpleKeyCodes[key])
 }
+
+// simpleKeyCodes are the character codes of simpleKeys for modifyOtherKeys.
+var simpleKeyCodes = map[string]rune{"enter": '\r', "tab": '\t', "esc": 0x1b, "backspace": 0x7f, "space": ' '}
 
 func encodeChar(mods int, c rune) (string, bool, error) {
 	alt := mods&(ModAlt|ModMeta) != 0
@@ -229,7 +233,7 @@ func encodeChar(mods int, c rune) (string, bool, error) {
 			return prefix + string(rune(b)), true, nil
 		}
 	}
-	return "", true, unencodable(mods, string(c))
+	return "", true, unencodable(mods, string(c), unicode.ToLower(c))
 }
 
 // ctrlByte returns the C0 control byte produced by ctrl+c.
@@ -257,13 +261,31 @@ func ctrlByte(c rune) (byte, bool) {
 	return 0, false
 }
 
-func unencodable(mods int, key string) error {
+// NeedsModifyOtherKeysError is returned for key combinations that have no
+// legacy xterm encoding. They can still be sent in xterm's modifyOtherKeys
+// form (Seq) when the application has enabled that mode (CSI > 4 ; 1|2 m),
+// as Bubble Tea v2 does at startup.
+type NeedsModifyOtherKeysError struct {
+	Key string
+	Seq string // CSI 27 ; modifier ; code ~
+}
+
+func (e *NeedsModifyOtherKeysError) Error() string {
+	return fmt.Sprintf("%s has no legacy xterm encoding and the app has not enabled modifyOtherKeys (CSI > 4 ; 1|2 m); "+
+		"send the raw sequence with type:\\e[... if needed", e.Key)
+}
+
+// unencodable returns the modifyOtherKeys fallback for mods+key; code is
+// the key's character code (unshifted for letters).
+func unencodable(mods int, key string, code rune) error {
 	var names []string
 	for _, n := range []string{"ctrl", "alt", "shift", "meta"} {
 		if mods&modNames[n] != 0 {
 			names = append(names, n)
 		}
 	}
-	return fmt.Errorf("%s+%s has no legacy xterm encoding; send the raw sequence instead (e.g. type:\\e[...)",
-		strings.Join(names, "+"), key)
+	return &NeedsModifyOtherKeysError{
+		Key: strings.Join(append(names, key), "+"),
+		Seq: fmt.Sprintf("\x1b[27;%d;%d~", 1+mods, code),
+	}
 }

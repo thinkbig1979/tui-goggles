@@ -1,6 +1,7 @@
 package input
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,6 +29,10 @@ type Action struct {
 	Mouse MouseAction
 	Cols  int
 	Rows  int
+	// ModifyOtherKeys is set for keys that can only be sent in xterm's
+	// modifyOtherKeys form; Bytes then holds that form, and it may only be
+	// sent once the application has enabled the mode.
+	ModifyOtherKeys bool
 }
 
 // Paste start and end markers for bracketed paste (mode 2004).
@@ -54,6 +59,10 @@ func ParseToken(tok string) (Action, error) {
 		return Action{Kind: ActionMouse, Token: tok, Mouse: m}, err
 	}
 	seq, ok, err := EncodeKey(tok)
+	var mok *NeedsModifyOtherKeysError
+	if errors.As(err, &mok) {
+		return Action{Kind: ActionSend, Token: tok, Bytes: mok.Seq, ModifyOtherKeys: true}, nil
+	}
 	if err != nil {
 		return Action{}, err
 	}

@@ -579,6 +579,9 @@ func sendAction(term *terminal.Terminal, action input.Action) error {
 		}
 		return term.SendKeys(action.Bytes)
 	default:
+		if action.ModifyOtherKeys && term.ModifyOtherKeys() == 0 {
+			return fmt.Errorf("%s has no legacy xterm encoding and the app has not enabled modifyOtherKeys (CSI > 4 ; 1|2 m)", action.Token)
+		}
 		return term.SendKeys(action.Bytes)
 	}
 }

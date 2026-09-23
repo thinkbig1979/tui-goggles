@@ -117,7 +117,7 @@ For the `-keys` flag, use these names (space-separated):
 - **Navigation**: `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`
 - **Actions**: `enter`, `tab`, `esc`, `backspace`, `delete`, `space`
 - **Function keys**: `f1` through `f12`
-- **Modifiers**: `ctrl`, `alt`, `shift`, `meta` joined with `+` or `-`, e.g. `ctrl-a`, `shift+tab`, `alt+left`, `ctrl+pgup`, `ctrl+shift+right`, `ctrl+space` (xterm encoding, see SKILL.md)
+- **Modifiers**: `ctrl`, `alt`, `shift`, `meta` joined with `+` or `-`, e.g. `ctrl-a`, `shift+tab`, `alt+left`, `ctrl+pgup`, `ctrl+shift+right`, `ctrl+space` (xterm encoding, see SKILL.md); `shift+enter`, `ctrl+tab` and other combos without a legacy encoding use modifyOtherKeys when the app enables it
 - **Mouse**: `click:X,Y[,button]`, `dblclick:`, `press:`, `release:`, `drag:X1,Y1-X2,Y2`, `move:`, `wheel-up:`/`wheel-down:`, with 0-based cells and optional modifiers (`shift+click:3,0`), sent as SGR 1006
 - **Text**: `type:"text with spaces"` types verbatim, `paste:"text"` sends a bracketed paste; quotes group, and `\t \n \r \e \s \xHH` escapes work anywhere
 - **Resize**: `resize:100x30` resizes the terminal mid-session (the app gets SIGWINCH)

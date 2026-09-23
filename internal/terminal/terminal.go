@@ -232,6 +232,12 @@ func defaultString(s, def string) string {
 	return s
 }
 
+// ModifyOtherKeys returns the xterm modifyOtherKeys level the application
+// has enabled (0 = off, 1 or 2).
+func (t *Terminal) ModifyOtherKeys() int {
+	return t.resp.ModifyOtherKeys()
+}
+
 // PrivateModeSet reports whether the application has set DEC private mode
 // m (for example 2004, bracketed paste). Only modes the emulator tracks are
 // reported; others are always false.

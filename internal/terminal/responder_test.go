@@ -163,3 +163,28 @@ func TestParseColor(t *testing.T) {
 		}
 	}
 }
+
+func TestResponderTracksModifyOtherKeys(t *testing.T) {
+	r, _ := newTestResponder()
+	if r.ModifyOtherKeys() != 0 {
+		t.Fatal("modifyOtherKeys should start off")
+	}
+	for _, step := range []struct {
+		in   string
+		want int
+	}{
+		{"\x1b[>4;2m", 2},
+		{"\x1b[>4;1m", 1},
+		{"\x1b[>4m", 0},
+		{"\x1b[>4;2m", 2},
+		{"\x1b[>1;2m", 2}, // other resources leave it alone
+		{"\x1bc", 0},      // RIS resets
+	} {
+		if out := feed(r, step.in, 2); out != "" && step.in != "\x1bc" {
+			t.Errorf("%q passed on as %q", step.in, out)
+		}
+		if got := r.ModifyOtherKeys(); got != step.want {
+			t.Errorf("after %q: level %d; want %d", step.in, got, step.want)
+		}
+	}
+}

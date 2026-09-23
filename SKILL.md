@@ -172,7 +172,9 @@ echo -e "down\ndown\nenter" | ~/.claude/skills/tui-capture/bin/tui-goggles -keys
 | `ctrl+<letter>` | C0 control byte | `ctrl+c` = `\x03`, `ctrl+space` = `\x00` |
 | `shift+<letter>` | Upper-case letter | `shift+a` = `A` |
 
-`m` = 1 + shift(1) + alt(2) + ctrl(4) + meta(8). Combinations with no legacy xterm encoding (`shift+enter`, `ctrl+tab`, `ctrl+shift+a`) are rejected with exit 1 rather than silently mis-sent. Note that `ctrl+m`, `ctrl+i` and `ctrl+[` send the same bytes as `enter`, `tab` and `esc`, so the app sees those keys.
+`m` = 1 + shift(1) + alt(2) + ctrl(4) + meta(8).
+
+Combinations with no legacy xterm encoding (`shift+enter`, `ctrl+enter`, `ctrl+tab`, `ctrl+shift+tab`, `ctrl+shift+a`, `ctrl+1`, `shift+backspace`) are sent in xterm's modifyOtherKeys form, `CSI 27;m;code~` (letters use their unshifted code), **if the app has enabled modifyOtherKeys** (`CSI > 4;1 m` or `CSI > 4;2 m`; Bubble Tea v2 does this at startup). If it hasn't, the run fails with exit 1 at that key instead of sending something the app would misread. Note that `ctrl+m`, `ctrl+i` and `ctrl+[` send the same bytes as `enter`, `tab` and `esc`, so the app sees those keys.
 
 ## Typing, Pasting and Escapes
 

@@ -1,6 +1,9 @@
 package input
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestEncodeKey(t *testing.T) {
 	tests := []struct {
@@ -97,5 +100,46 @@ func TestEncodeKeyErrors(t *testing.T) {
 		if err == nil {
 			t.Errorf("EncodeKey(%q) = %q, ok=%v; want error", spec, got, ok)
 		}
+	}
+}
+
+func TestEncodeKeyModifyOtherKeysFallback(t *testing.T) {
+	tests := map[string]string{
+		"shift+enter":      "\x1b[27;2;13~",
+		"ctrl+enter":       "\x1b[27;5;13~",
+		"ctrl+alt+enter":   "\x1b[27;7;13~",
+		"ctrl+tab":         "\x1b[27;5;9~",
+		"ctrl+shift+tab":   "\x1b[27;6;9~",
+		"ctrl+esc":         "\x1b[27;5;27~",
+		"shift+backspace":  "\x1b[27;2;127~",
+		"ctrl+shift+space": "\x1b[27;6;32~",
+		"ctrl+shift+a":     "\x1b[27;6;97~", // unshifted code for letters
+		"ctrl+shift+A":     "\x1b[27;6;97~",
+		"ctrl+1":           "\x1b[27;5;49~",
+		"ctrl+.":           "\x1b[27;5;46~",
+	}
+	for spec, want := range tests {
+		_, ok, err := EncodeKey(spec)
+		var mok *NeedsModifyOtherKeysError
+		if !ok || !errors.As(err, &mok) || mok.Seq != want {
+			t.Errorf("EncodeKey(%q) err=%v; want modifyOtherKeys fallback %q", spec, err, want)
+		}
+	}
+	// Unknown keys are still plain errors.
+	var mok *NeedsModifyOtherKeysError
+	if _, _, err := EncodeKey("ctrl+foo"); err == nil || errors.As(err, &mok) {
+		t.Errorf("EncodeKey(ctrl+foo) err=%v; want a plain error", err)
+	}
+}
+
+func TestParseTokenModifyOtherKeys(t *testing.T) {
+	a, err := ParseToken("shift+enter")
+	if err != nil || !a.ModifyOtherKeys || a.Bytes != "\x1b[27;2;13~" {
+		t.Errorf("ParseToken(shift+enter) = %+v, %v", a, err)
+	}
+	// Keys with a legacy encoding keep it.
+	a, _ = ParseToken("ctrl+a")
+	if a.ModifyOtherKeys || a.Bytes != "\x01" {
+		t.Errorf("ParseToken(ctrl+a) = %+v", a)
 	}
 }

@@ -29,6 +29,7 @@ type responder struct {
 	mu           sync.Mutex
 	privateModes map[int]bool // DEC private modes (CSI ? Pm h/l)
 	ansiModes    map[int]bool // ANSI modes (CSI Pm h/l)
+	otherKeys    int          // xterm modifyOtherKeys level (CSI > 4 ; n m)
 }
 
 // DEC private modes the emulator implements, with their initial state.
@@ -76,6 +77,33 @@ func (r *responder) resetModes() {
 	for m, v := range knownANSIModes {
 		r.ansiModes[m] = v
 	}
+	r.otherKeys = 0
+}
+
+// ModifyOtherKeys returns the modifyOtherKeys level the application set
+// (0 = off).
+func (r *responder) ModifyOtherKeys() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.otherKeys
+}
+
+// trackModifyOtherKeys handles XTMODKEYS for resource 4 (modifyOtherKeys):
+// "4;n" sets level n, "4" resets it.
+func (r *responder) trackModifyOtherKeys(params string) {
+	res, val, hasVal := strings.Cut(params, ";")
+	if res != "4" {
+		return
+	}
+	level := 0
+	if hasVal {
+		if n, err := strconv.Atoi(val); err == nil {
+			level = n
+		}
+	}
+	r.mu.Lock()
+	r.otherKeys = level
+	r.mu.Unlock()
 }
 
 // PrivateMode reports whether DEC private mode m is set.
@@ -249,6 +277,11 @@ func (r *responder) handleCSI(seq []byte) []byte {
 	case (final == 'h' || final == 'l') && intermediates == "" && (prefix == 0 || prefix == '?'):
 		r.trackModes(prefix == '?', params, final == 'h')
 		return seq
+
+	// XTMODKEYS: track modifyOtherKeys, then drop (vt10x would read it as SGR).
+	case final == 'm' && prefix == '>' && intermediates == "":
+		r.trackModifyOtherKeys(params)
+		return nil
 
 	// SGR: normalize colon sub-parameters and drop what vt10x misparses.
 	case final == 'm' && prefix == 0 && intermediates == "":
