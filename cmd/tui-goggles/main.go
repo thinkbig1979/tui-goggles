@@ -53,10 +53,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/your-username/tui-goggles/internal/input"
-	"github.com/your-username/tui-goggles/internal/script"
-	"github.com/your-username/tui-goggles/internal/styles"
-	"github.com/your-username/tui-goggles/internal/terminal"
+	"github.com/thinkbig1979/tui-goggles/internal/input"
+	"github.com/thinkbig1979/tui-goggles/internal/script"
+	"github.com/thinkbig1979/tui-goggles/internal/styles"
+	"github.com/thinkbig1979/tui-goggles/internal/terminal"
 )
 
 // Exit codes

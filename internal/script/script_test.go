@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-username/tui-goggles/internal/input"
+	"github.com/thinkbig1979/tui-goggles/internal/input"
 )
 
 func TestParse(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/your-username/tui-goggles
+module github.com/thinkbig1979/tui-goggles
 
 go 1.21
 

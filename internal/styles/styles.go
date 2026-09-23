@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/your-username/tui-goggles/internal/input"
-	"github.com/your-username/tui-goggles/internal/terminal"
+	"github.com/thinkbig1979/tui-goggles/internal/input"
+	"github.com/thinkbig1979/tui-goggles/internal/terminal"
 )
 
 // Span is a run of cells on one row that share a non-default style.

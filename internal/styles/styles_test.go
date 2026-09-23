@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/your-username/tui-goggles/internal/terminal"
+	"github.com/thinkbig1979/tui-goggles/internal/terminal"
 )
 
 const (

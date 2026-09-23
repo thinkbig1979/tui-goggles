@@ -10,6 +10,14 @@ When LLMs run TUI applications, they receive raw ANSI escape sequences that are 
 
 ## Installation
 
+With Go 1.21 or later:
+
+```bash
+go install github.com/thinkbig1979/tui-goggles/cmd/tui-goggles@latest
+```
+
+Or from a checkout:
+
 ```bash
 cd tui-goggles
 go build -o bin/tui-goggles ./cmd/tui-goggles

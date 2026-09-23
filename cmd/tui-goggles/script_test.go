@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-username/tui-goggles/internal/script"
-	"github.com/your-username/tui-goggles/internal/terminal"
+	"github.com/thinkbig1979/tui-goggles/internal/script"
+	"github.com/thinkbig1979/tui-goggles/internal/terminal"
 )
 
 // runTestScript runs src against `cat` (which echoes typed input) and

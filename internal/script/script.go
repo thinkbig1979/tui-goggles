@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/your-username/tui-goggles/internal/input"
-	"github.com/your-username/tui-goggles/internal/styles"
+	"github.com/thinkbig1979/tui-goggles/internal/input"
+	"github.com/thinkbig1979/tui-goggles/internal/styles"
 )
 
 // Kind identifies a step type.
