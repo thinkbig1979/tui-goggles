@@ -165,6 +165,28 @@ echo -e "down\ndown\nenter" | ~/.claude/skills/tui-capture/bin/tui-goggles -keys
 
 `m` = 1 + shift(1) + alt(2) + ctrl(4) + meta(8). Combinations with no legacy xterm encoding (`shift+enter`, `ctrl+tab`, `ctrl+shift+a`) are rejected with exit 1 rather than silently mis-sent. Note that `ctrl+m`, `ctrl+i` and `ctrl+[` send the same bytes as `enter`, `tab` and `esc`, so the app sees those keys.
 
+## Mouse
+
+Mouse tokens go in `-keys` like any other token, as `verb:X,Y`. Coordinates are **0-based cells** (the same as `cursor_col`/`cursor_row` in JSON output: `X` is the column, `Y` the row). Events are sent as SGR 1006 sequences (`\e[<b;x;yM` / `m`), which Bubble Tea v2 and most modern TUIs expect.
+
+| Token | Sends |
+|-------|-------|
+| `click:X,Y[,button]` | press + release |
+| `dblclick:X,Y[,button]` | two clicks in one write, no input delay between them |
+| `press:X,Y[,button]` / `release:X,Y[,button]` | a single press or release |
+| `drag:X1,Y1-X2,Y2[,button]` | press at start, one motion event per cell along the line, release at end |
+| `move:X,Y` | motion with no button held (needs all-motion tracking, mode 1003) |
+| `wheel-up:X,Y`, `wheel-down:X,Y`, `wheel-left:X,Y`, `wheel-right:X,Y` | one wheel notch |
+
+`button` is `left` (default), `middle` or `right`. Prefix modifiers the same way as keys: `shift+click:3,0`, `ctrl+wheel-up:10,5`, `alt+drag:0,2-8,2`.
+
+```bash
+# Click the second tab, drag-select across a line, scroll down twice
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "click:8,0 drag:2,5-20,5 wheel-down:10,10 wheel-down:10,10" -- ./app
+```
+
+A warning is printed to stderr (and the event is still sent) when the app has not enabled the needed mouse mode, or when the cell is outside the terminal.
+
 ## Common Patterns
 
 ### Quick pass/fail test

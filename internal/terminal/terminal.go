@@ -490,3 +490,24 @@ func (t *Terminal) IsRunning() bool {
 func containsText(screen, text string) bool {
 	return text != "" && screen != "" && strings.Contains(screen, text)
 }
+
+// MouseModes reports which mouse reporting modes the application has enabled.
+func (t *Terminal) MouseModes() MouseModes {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	m := t.vt.Mode()
+	return MouseModes{
+		Buttons:      m&vt10x.ModeMouseMask != 0,
+		ButtonMotion: m&(vt10x.ModeMouseMotion|vt10x.ModeMouseMany) != 0,
+		AnyMotion:    m&vt10x.ModeMouseMany != 0,
+		SGR:          m&vt10x.ModeMouseSgr != 0,
+	}
+}
+
+// MouseModes describes the enabled mouse reporting modes.
+type MouseModes struct {
+	Buttons      bool // any tracking mode (9, 1000, 1002, 1003)
+	ButtonMotion bool // motion while a button is held (1002 or 1003)
+	AnyMotion    bool // all motion (1003)
+	SGR          bool // SGR extended coordinates (1006)
+}

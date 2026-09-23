@@ -271,13 +271,8 @@ func run(command string, args []string, cfg config) int {
 				if part == "" {
 					continue
 				}
-				key, err := parseKey(part)
-				if err != nil {
+				if err := sendToken(term, part); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					return ExitGeneralError
-				}
-				if err := term.SendKeys(key); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: sending key %q: %v\n", part, err)
 					return ExitGeneralError
 				}
 				// Wait for screen to stabilize after key input
@@ -462,11 +457,7 @@ func sendKeys(term *terminal.Terminal, keys string, inputDelay time.Duration) er
 		if part == "" {
 			continue
 		}
-		key, err := parseKey(part)
-		if err != nil {
-			return err
-		}
-		if err := term.SendKeys(key); err != nil {
+		if err := sendToken(term, part); err != nil {
 			return err
 		}
 		// Delay between keys
@@ -476,18 +467,40 @@ func sendKeys(term *terminal.Terminal, keys string, inputDelay time.Duration) er
 	return nil
 }
 
-// parseKey converts one -keys token into the bytes to send.
-// Key specifications (see input.EncodeKey) are encoded; anything else is
-// sent as literal text.
-func parseKey(s string) (string, error) {
-	seq, ok, err := input.EncodeKey(s)
+// sendToken parses one -keys token and sends it to the application.
+func sendToken(term *terminal.Terminal, tok string) error {
+	action, err := input.ParseToken(tok)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if !ok {
-		return s, nil
+	switch action.Kind {
+	case input.ActionMouse:
+		warnMouseMode(term, action)
+		return term.SendKeys(action.Mouse.Seq)
+	default:
+		return term.SendKeys(action.Bytes)
 	}
-	return seq, nil
+}
+
+// warnMouseMode prints a warning when the application has not enabled the
+// mouse reporting a mouse action needs. The action is still sent.
+func warnMouseMode(term *terminal.Terminal, action input.Action) {
+	modes := term.MouseModes()
+	cols, rows := term.Size()
+	m := action.Mouse
+	switch {
+	case !modes.Buttons:
+		fmt.Fprintf(os.Stderr, "Warning: %s: the app has not enabled mouse tracking (DECSET 1000/1002/1003)\n", action.Token)
+	case !modes.SGR:
+		fmt.Fprintf(os.Stderr, "Warning: %s: the app has not enabled SGR mouse mode (DECSET 1006); events are sent as SGR anyway\n", action.Token)
+	case m.NeedsAnyMotion && !modes.AnyMotion:
+		fmt.Fprintf(os.Stderr, "Warning: %s: motion without a button needs all-motion tracking (DECSET 1003)\n", action.Token)
+	case m.NeedsButtonMotion && !modes.ButtonMotion:
+		fmt.Fprintf(os.Stderr, "Warning: %s: drag motion needs button-motion tracking (DECSET 1002 or 1003)\n", action.Token)
+	}
+	if m.X >= cols || m.Y >= rows {
+		fmt.Fprintf(os.Stderr, "Warning: %s: cell %d,%d is outside the %dx%d terminal (coordinates are 0-based)\n", action.Token, m.X, m.Y, cols, rows)
+	}
 }
 
 func formatJSON(result CaptureResult) string {
