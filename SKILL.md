@@ -1,11 +1,11 @@
 ---
 name: tui-capture
-description: Captures TUI (Text User Interface) application screens as clean text. Use when needing to debug TUI apps, test TUI output, verify terminal app state, capture what a CLI tool displays, inspect interactive terminal applications, or see rendered TUI screens. Triggers on "debug tui", "test tui", "capture tui", "tui screenshot", "terminal app output", or "see what [app] shows".
+description: Captures TUI (Text User Interface) application screens as clean text, drives them with keys (including modifiers), mouse, pastes and resizes, runs multi-step scripts with asserts, and checks colors and styles. Use when needing to debug TUI apps, test TUI output, verify terminal app state, capture what a CLI tool displays, inspect interactive terminal applications, or see rendered TUI screens. Triggers on "debug tui", "test tui", "capture tui", "tui screenshot", "terminal app output", or "see what [app] shows".
 ---
 
 # TUI Capture with tui-goggles
 
-Capture text-based screenshots of TUI applications by running them in a virtual terminal.
+Capture text-based screenshots of TUI applications by running them in a virtual terminal, and drive them with keyboard, mouse, paste and resize input.
 
 ## Binary Location
 
@@ -60,7 +60,7 @@ Runs a TUI application in a virtual terminal, processes all ANSI escape sequence
 
 ## Not Supported
 
-This tool captures **text-based** TUI output only. It does NOT support:
+This tool captures screen text and cell styles only. It does NOT support:
 - **Sixel graphics** - renders blank or shows escape codes
 - **Kitty graphics protocol** - inline images won't render
 - **iTerm2 inline images** - won't render
@@ -94,6 +94,8 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 | `-quiet` | false | Suppress output on success |
 | `-env` | | Set env var for command (KEY=VALUE, repeatable) |
 | `-script` | "" | Run a step script from a file (`-` = stdin); see Scripts |
+| `-styles` | false | Add styled spans (colors, attributes) to the output |
+| `-assert-style` | | Assert cell styles on the final screen (repeatable, exit 3 if not met) |
 | `-fg` | #ffffff | Foreground color reported for OSC 10/12 queries |
 | `-bg` | #000000 | Background color reported for OSC 11 queries (e.g. `#fdf6e3` to test a light theme) |
 | `-grace` | 1s | On exit, time the app gets after SIGHUP before SIGKILL (0 = kill at once) |
@@ -214,6 +216,7 @@ sleep 200ms
 capture after-save             # record the screen under a name
 assert Saved                   # exit 3 unless the text is on screen
 assert-not Error               # exit 3 if the text is on screen
+assert-style text="Tab 2" reverse bold   # see Styles
 ```
 
 Text arguments run to the end of the line; one pair of surrounding quotes is removed (`assert "  padded "`) and backslash escapes work as in `-keys`. `capture` and `assert` wait for the screen to be stable first. Each input step is followed by `-input-delay`.
@@ -239,6 +242,38 @@ The run stops at the first failing step: `assert`/`assert-not` exit 3, a `wait-f
 
 Text format prints each capture under a `--- name (line N) ---` header. `-script` cannot be combined with `-keys`/`-keys-stdin`.
 
+## Styles: Colors and Attributes
+
+`-styles` adds the styled regions of the screen: runs of cells on one row that share a style, with default-styled text left out. In JSON each capture gets a `spans` array; in text format the spans follow the screen under `--- styles ---`:
+
+```
+row 0 col 16-23 " second " bold fg=#1e1e2e bg=#cba6f7
+row 2 col 6-8 "ond" fg=#cdd6f4 bg=#45475a
+```
+
+```json
+"spans": [{"row": 0, "col": 16, "len": 8, "text": " second ", "fg": "#1e1e2e", "bg": "#cba6f7", "attrs": ["bold"]}]
+```
+
+Colors are `default`, `ansi:N` (palette index 0-255) or `#rrggbb`. Attributes are `bold`, `italic`, `underline`, `blink`, `reverse`. For reverse-video cells, `fg`/`bg` are the colors as the app set them, plus `reverse`.
+
+**Style assertions** check that every cell of a selection meets every expectation (exit 3 otherwise). Use `-assert-style` (repeatable, checked on the final screen) or an `assert-style` script step:
+
+```bash
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "alt+right" \
+  -assert-style 'text="Tab 2" reverse bold' -assert-style 'text="Tab 1" !reverse' -- ./app
+```
+
+| Part | Syntax |
+|------|--------|
+| Selector | `text=STRING` (first occurrence, reading order; quote it if it has spaces), `X,Y` (one cell), `X,Y,LEN` (LEN cells from column X on row Y). 0-based, `X` = column. |
+| Expectations | `bold` `italic` `underline` `blink` `reverse`, `!ATTR` for absence, `fg=COLOR`, `bg=COLOR`, `plain` (default colors, no attributes) |
+| COLOR | `default`, `ansi:N` or `N`, `#rrggbb` |
+
+On failure the message names the first mismatching cell and its actual style, e.g. `cell 8,0 'T': expected reverse, got fg=#808080 bg=default`.
+
+Limits (from the emulator): bold text in colors 0-7 is reported as 8-15; an RGB color whose value is below 256 (`#0000ff` and darker blues) is reported as a palette index; there is no faint or strikethrough attribute; wide (CJK/emoji) characters are not handled.
+
 ## Terminal Queries
 
 TUI frameworks query the terminal at startup. tui-goggles answers like a VT220-class xterm with no optional extras, so apps pick safe fallbacks instead of waiting or enabling features the emulator can't render:
@@ -252,7 +287,9 @@ TUI frameworks query the terminal at startup. tui-goggles answers like a VT220-c
 | DSR `CSI 6 n`, window size `CSI 14/18/19 t` | cursor position, live size |
 | Kitty keyboard `CSI ? u`, palette, clipboard | not answered (unsupported), so keys stay in xterm encoding |
 
-Sequences split across reads are handled. Sequences the emulator would misread (kitty keyboard push/pop, modifyOtherKeys, cursor style, colon-form SGR like `4:3` or `38:2::r:g:b`) are filtered or normalized so they don't move the cursor or reset styles. `-env TERM=...` overrides the default `TERM=xterm-256color`.
+Sequences split across reads are handled. Sequences the emulator would misread (kitty keyboard push/pop, modifyOtherKeys, cursor style, colon-form SGR like `4:3` or `38:2::r:g:b`) are filtered or normalized so they don't move the cursor or reset styles. ### Environment
+
+The app gets a fixed terminal identity so output does not depend on the terminal tui-goggles was started from: `TERM=xterm-256color` and `COLORTERM=truecolor` are set, and variables describing the outer terminal or forcing colors are not passed on (`TERM_PROGRAM*`, `COLORFGBG`, `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR*`, `TMUX*`, `SSH_TTY`/`SSH_CONNECTION`/`SSH_CLIENT`, `KITTY_*`, `WEZTERM_*`, `GHOSTTY_*`, `ALACRITTY_*`, `VTE_VERSION`, `WT_SESSION` and similar). Everything else is inherited. `-env` overrides any of this: `-env COLORTERM=` for a 256-color app, `-env NO_COLOR=1`, `-env TERM=xterm`.
 
 ## Resizing and Shutdown
 

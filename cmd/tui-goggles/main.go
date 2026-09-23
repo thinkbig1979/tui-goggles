@@ -55,6 +55,7 @@ import (
 
 	"github.com/your-username/tui-goggles/internal/input"
 	"github.com/your-username/tui-goggles/internal/script"
+	"github.com/your-username/tui-goggles/internal/styles"
 	"github.com/your-username/tui-goggles/internal/terminal"
 )
 
@@ -91,6 +92,8 @@ type config struct {
 	fg            string
 	bg            string
 	script        string
+	styles        bool
+	assertStyles  []string
 }
 
 // arrayFlag allows multiple flags of the same type
@@ -129,6 +132,7 @@ func parseFlags() config {
 	var asserts arrayFlag
 	var checks arrayFlag
 	var envVars arrayFlag
+	var assertStyles arrayFlag
 
 	flag.IntVar(&cfg.cols, "cols", 80, "Terminal width in columns")
 	flag.IntVar(&cfg.rows, "rows", 24, "Terminal height in rows")
@@ -151,6 +155,8 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.inputDelay, "input-delay", 50*time.Millisecond, "Delay between keystrokes")
 	flag.StringVar(&cfg.fg, "fg", "#ffffff", "Foreground color reported to the app (OSC 10/12 queries)")
 	flag.StringVar(&cfg.bg, "bg", "#000000", "Background color reported to the app (OSC 11 query); use a light color to test light themes")
+	flag.BoolVar(&cfg.styles, "styles", false, "Include styled spans (colors, bold, reverse, ...) in the output")
+	flag.Var(&assertStyles, "assert-style", "Assert cell styles, e.g. 'text=\"Tab 2\" reverse bold' or '0,0,5 fg=#ff0000' (repeatable, exit code 3 if not met)")
 	flag.StringVar(&cfg.script, "script", "", "Run a step script from this file ('-' for stdin); see SKILL.md")
 	flag.DurationVar(&cfg.grace, "grace", time.Second, "On exit, time the app gets to quit after SIGHUP before SIGKILL (0 = kill immediately)")
 
@@ -159,6 +165,7 @@ func parseFlags() config {
 	cfg.asserts = asserts
 	cfg.checks = checks
 	cfg.envVars = envVars
+	cfg.assertStyles = assertStyles
 	return cfg
 }
 
@@ -176,7 +183,9 @@ type CaptureResult struct {
 	Timestamp     time.Time       `json:"timestamp"`
 	Command       string          `json:"command"`
 	Checks        map[string]bool `json:"checks,omitempty"`
-	Timing        *TimingInfo     `json:"timing,omitempty"`
+	// Spans lists styled runs of cells (with -styles).
+	Spans  []styles.Span `json:"spans,omitempty"`
+	Timing *TimingInfo   `json:"timing,omitempty"`
 	// Process describes how the app ended (final capture only).
 	Process *terminal.ExitStatus `json:"process,omitempty"`
 }
@@ -209,6 +218,11 @@ func run(command string, args []string, cfg config) int {
 		return ExitGeneralError
 	}
 	actions, err := parseActions(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return ExitGeneralError
+	}
+	styleAsserts, err := parseStyleAssertions(cfg.assertStyles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitGeneralError
@@ -279,7 +293,7 @@ func run(command string, args []string, cfg config) int {
 	}
 
 	if cfg.script != "" {
-		return runScript(term, steps, command, args, cfg, timing, startTime, &timedOut)
+		return runScript(term, steps, command, args, cfg, styleAsserts, timing, startTime, &timedOut)
 	}
 
 	var results []CaptureResult
@@ -345,6 +359,9 @@ func run(command string, args []string, cfg config) int {
 		}
 	}
 
+	// Check style assertions against the final screen (before the app is closed)
+	styleErr := checkStyleAssertions(styleAsserts, term.Cells())
+
 	// End the app the way closing a terminal would (SIGHUP, then SIGKILL after
 	// the grace period) and record how it ended.
 	exitedOnItsOwn := term.Exited()
@@ -365,6 +382,14 @@ func run(command string, args []string, cfg config) int {
 				return ExitAssertionFailed
 			}
 		}
+	}
+
+	if styleErr != nil {
+		fmt.Fprintf(os.Stderr, "Style assertion failed: %v\n", styleErr)
+		if !cfg.quiet {
+			outputResult(finalResult, results, cfg, timing)
+		}
+		return ExitAssertionFailed
 	}
 
 	// Output result (unless quiet mode)
@@ -422,6 +447,10 @@ func parseActions(cfg config) ([]input.Action, error) {
 func captureScreen(term *terminal.Terminal, command string, args []string, cfg config, timing *TimingInfo) CaptureResult {
 	screen, cursorCol, cursorRow, cursorVisible := term.ScreenshotWithCursor()
 	cols, rows := term.Size()
+	var spans []styles.Span
+	if cfg.styles {
+		spans = styles.Spans(term.Cells())
+	}
 
 	if cfg.trim {
 		screen = trimTrailingBlankLines(screen)
@@ -437,7 +466,39 @@ func captureScreen(term *terminal.Terminal, command string, args []string, cfg c
 		Timestamp:     time.Now(),
 		Command:       command + " " + strings.Join(args, " "),
 		Timing:        timing,
+		Spans:         spans,
 	}
+}
+
+// screenText renders a capture for text output: the screen, followed by
+// its styled spans when -styles is on.
+func screenText(c CaptureResult) string {
+	if len(c.Spans) == 0 {
+		return c.Screen
+	}
+	return c.Screen + "\n--- styles ---\n" + styles.FormatSpans(c.Spans)
+}
+
+func parseStyleAssertions(specs []string) ([]styles.Assertion, error) {
+	var asserts []styles.Assertion
+	for _, spec := range specs {
+		a, err := styles.ParseAssertion(spec)
+		if err != nil {
+			return nil, fmt.Errorf("-assert-style: %w", err)
+		}
+		asserts = append(asserts, a)
+	}
+	return asserts, nil
+}
+
+// checkStyleAssertions returns the first failing assertion as an error.
+func checkStyleAssertions(asserts []styles.Assertion, cells [][]terminal.Cell) error {
+	for _, a := range asserts {
+		if err := a.Check(cells); err != nil {
+			return fmt.Errorf("%s: %w", a.Spec, err)
+		}
+	}
+	return nil
 }
 
 func trimTrailingBlankLines(s string) string {
@@ -479,14 +540,14 @@ func outputResult(result CaptureResult, multiResults []CaptureResult, cfg config
 					sb.WriteString(fmt.Sprintf("%d", i))
 					sb.WriteString(" ---\n")
 				}
-				sb.WriteString(r.Screen)
+				sb.WriteString(screenText(r))
 			}
 			output = sb.String()
 		} else {
-			output = result.Screen
+			output = screenText(result)
 		}
 	default:
-		output = result.Screen
+		output = screenText(result)
 	}
 
 	writeOutput(output, cfg)

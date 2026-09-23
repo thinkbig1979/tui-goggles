@@ -33,7 +33,7 @@ func runTestScript(t *testing.T, src string) (int, ScriptResult) {
 		t.Fatal(err)
 	}
 	var timedOut atomic.Bool
-	code := runScript(term, steps, "cat", nil, cfg, &TimingInfo{}, time.Now(), &timedOut)
+	code := runScript(term, steps, "cat", nil, cfg, nil, &TimingInfo{}, time.Now(), &timedOut)
 
 	data, err := os.ReadFile(out)
 	if err != nil {

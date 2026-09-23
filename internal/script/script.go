@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/your-username/tui-goggles/internal/input"
+	"github.com/your-username/tui-goggles/internal/styles"
 )
 
 // Kind identifies a step type.
@@ -133,8 +134,8 @@ func parseLine(line string) (Step, error) {
 		return Step{Kind: kind, Arg: text}, nil
 
 	case "assert-style":
-		if strings.TrimSpace(rest) == "" {
-			return Step{}, fmt.Errorf("assert-style needs a selector and expectations")
+		if _, err := styles.ParseAssertion(rest); err != nil {
+			return Step{}, err
 		}
 		return Step{Kind: AssertStyle, Arg: rest}, nil
 

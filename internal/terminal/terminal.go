@@ -89,10 +89,7 @@ func New(command string, args []string, opts Options) (*Terminal, error) {
 	}
 
 	cmd := exec.Command(command, args...)
-	// TERM goes before opts.Env so -env TERM=... can override it (for
-	// duplicate keys, the last one wins).
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	cmd.Env = append(cmd.Env, opts.Env...)
+	cmd.Env = buildEnv(os.Environ(), opts.Env)
 
 	// Start command with PTY first so we can use it as the vt10x writer
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -178,6 +175,54 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+// Variables that describe the real terminal (or multiplexer) tui-goggles
+// was started from, or force color behavior. They are not passed to the
+// app, so its color profile and feature detection do not depend on where
+// tui-goggles runs.
+var terminalEnvNames = map[string]bool{
+	"TERM": true, "COLORTERM": true, "COLORFGBG": true, "TERM_PROGRAM": true, "TERM_PROGRAM_VERSION": true,
+	"TERMINAL_EMULATOR": true, "TERM_SESSION_ID": true, "LC_TERMINAL": true, "LC_TERMINAL_VERSION": true,
+	"VTE_VERSION": true, "KONSOLE_VERSION": true, "WT_SESSION": true, "WT_PROFILE_ID": true,
+	"ITERM_SESSION_ID": true, "ITERM_PROFILE": true, "TMUX": true, "TMUX_PANE": true, "STY": true,
+	"NO_COLOR": true, "FORCE_COLOR": true, "CLICOLOR": true, "CLICOLOR_FORCE": true,
+	"SSH_TTY": true, "SSH_CONNECTION": true, "SSH_CLIENT": true,
+}
+
+var terminalEnvPrefixes = []string{
+	"KITTY_", "WEZTERM_", "ALACRITTY_", "GHOSTTY_", "KONSOLE_", "ZELLIJ", "HERDR_", "TILIX_", "TERMINATOR_",
+}
+
+// defaultEnv is the terminal identity the app sees unless -env overrides it.
+var defaultEnv = []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
+
+// buildEnv returns the app environment: the inherited environment without
+// terminal-specific variables, then defaultEnv, then extra. Later entries
+// win for duplicate keys, so extra can override anything.
+func buildEnv(inherited, extra []string) []string {
+	env := make([]string, 0, len(inherited)+len(defaultEnv)+len(extra))
+	for _, kv := range inherited {
+		name, _, _ := strings.Cut(kv, "=")
+		if isTerminalEnv(name) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, defaultEnv...)
+	return append(env, extra...)
+}
+
+func isTerminalEnv(name string) bool {
+	if terminalEnvNames[name] {
+		return true
+	}
+	for _, p := range terminalEnvPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultString(s, def string) string {
@@ -452,4 +497,61 @@ type MouseModes struct {
 	ButtonMotion bool // motion while a button is held (1002 or 1003)
 	AnyMotion    bool // all motion (1003)
 	SGR          bool // SGR extended coordinates (1006)
+}
+
+// Color is a cell color: 0-255 are palette indexes, DefaultFG and DefaultBG
+// are the terminal defaults, and other values are 24-bit RGB (r<<16|g<<8|b).
+type Color uint32
+
+// Default colors.
+const (
+	DefaultFG = Color(vt10x.DefaultFG)
+	DefaultBG = Color(vt10x.DefaultBG)
+)
+
+// Attr is a set of cell attributes.
+type Attr uint16
+
+// Cell attributes (the same bits vt10x uses internally).
+const (
+	AttrReverse   Attr = 1 << 0
+	AttrUnderline Attr = 1 << 1
+	AttrBold      Attr = 1 << 2
+	AttrItalic    Attr = 1 << 4
+	AttrBlink     Attr = 1 << 5
+	attrMask           = AttrReverse | AttrUnderline | AttrBold | AttrItalic | AttrBlink
+)
+
+// Cell is one screen cell with its style.
+//
+// FG and BG are the colors as the application set them: for reverse-video
+// cells they are swapped back (the emulator stores them swapped) and
+// AttrReverse is set. Bold text in colors 0-7 is stored brightened (8-15).
+type Cell struct {
+	Char   rune
+	FG, BG Color
+	Attrs  Attr
+}
+
+// Cells returns a snapshot of every cell on screen, indexed [row][col].
+func (t *Terminal) Cells() [][]Cell {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cols, rows := t.vt.Size()
+	grid := make([][]Cell, rows)
+	for y := 0; y < rows; y++ {
+		grid[y] = make([]Cell, cols)
+		for x := 0; x < cols; x++ {
+			g := t.vt.Cell(x, y)
+			c := Cell{Char: g.Char, FG: Color(g.FG), BG: Color(g.BG), Attrs: Attr(g.Mode) & attrMask}
+			if c.Char == 0 {
+				c.Char = ' '
+			}
+			if c.Attrs&AttrReverse != 0 {
+				c.FG, c.BG = c.BG, c.FG
+			}
+			grid[y][x] = c
+		}
+	}
+	return grid
 }

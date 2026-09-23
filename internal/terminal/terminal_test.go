@@ -146,3 +146,29 @@ func TestWaitForTextGone(t *testing.T) {
 		t.Error("WaitForTextGone(Done) succeeded; want timeout")
 	}
 }
+
+func TestBuildEnv(t *testing.T) {
+	env := buildEnv(
+		[]string{"HOME=/h", "TERM=screen", "COLORTERM=24bit", "TERM_PROGRAM=ghostty", "KITTY_WINDOW_ID=1", "NO_COLOR=1", "PATH=/bin"},
+		[]string{"FOO=bar", "COLORTERM="},
+	)
+	got := strings.Join(env, " ")
+	want := "HOME=/h PATH=/bin TERM=xterm-256color COLORTERM=truecolor FOO=bar COLORTERM="
+	if got != want {
+		t.Errorf("buildEnv = %q; want %q", got, want)
+	}
+}
+
+func TestAppEnvironment(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	t.Setenv("COLORTERM", "24bit")
+	term, err := New("sh", []string{"-c", `echo "[$TERM|$COLORTERM|${TERM_PROGRAM-unset}|$X]"; sleep 5`},
+		Options{Env: []string{"X=1", "TERM=vt100"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	if err := term.WaitForText("[vt100|truecolor|unset|1]", 5*time.Second); err != nil {
+		t.Errorf("%v\n%s", err, term.Screenshot())
+	}
+}

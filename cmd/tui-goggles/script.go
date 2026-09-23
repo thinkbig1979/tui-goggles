@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/your-username/tui-goggles/internal/script"
+	"github.com/your-username/tui-goggles/internal/styles"
 	"github.com/your-username/tui-goggles/internal/terminal"
 )
 
@@ -60,7 +61,7 @@ type scriptRunner struct {
 
 // runScript runs steps, closes the app, writes output and returns the exit code.
 func runScript(term *terminal.Terminal, steps []script.Step, command string, args []string,
-	cfg config, timing *TimingInfo, startTime time.Time, timedOut *atomic.Bool) int {
+	cfg config, styleAsserts []styles.Assertion, timing *TimingInfo, startTime time.Time, timedOut *atomic.Bool) int {
 	r := &scriptRunner{term: term, command: command, args: args, cfg: cfg, timedOut: timedOut}
 	r.result.Command = strings.TrimSpace(command + " " + strings.Join(args, " "))
 
@@ -94,6 +95,12 @@ func runScript(term *terminal.Terminal, steps []script.Step, command string, arg
 		r.result.Checks = make(map[string]bool)
 		for _, c := range cfg.checks {
 			r.result.Checks[c] = strings.Contains(final, c)
+		}
+	}
+	if exitCode == ExitSuccess {
+		if err := checkStyleAssertions(styleAsserts, term.Cells()); err != nil {
+			fmt.Fprintf(os.Stderr, "Style assertion failed: %v\n", err)
+			exitCode = ExitAssertionFailed
 		}
 	}
 	if exitCode == ExitSuccess {
@@ -177,7 +184,14 @@ func (r *scriptRunner) runStep(st script.Step) (int, error) {
 		}
 
 	case script.AssertStyle:
-		return ExitGeneralError, fmt.Errorf("assert-style is not supported yet")
+		_ = term.WaitForStable(cfg.stableTimeout, cfg.stableTime)
+		a, err := styles.ParseAssertion(st.Arg)
+		if err != nil {
+			return ExitGeneralError, err
+		}
+		if err := a.Check(term.Cells()); err != nil {
+			return ExitAssertionFailed, err
+		}
 	}
 	return ExitSuccess, nil
 }
@@ -204,7 +218,7 @@ func formatScriptResult(res ScriptResult, cfg config) string {
 		} else {
 			fmt.Fprintf(&sb, "--- %s ---\n", c.Name)
 		}
-		sb.WriteString(c.Screen)
+		sb.WriteString(screenText(c))
 	}
 	return sb.String()
 }
