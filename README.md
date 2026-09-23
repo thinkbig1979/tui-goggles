@@ -10,18 +10,39 @@ When LLMs run TUI applications, they receive raw ANSI escape sequences that are 
 
 ## Installation
 
+### As a Claude Code skill
+
+Installs `SKILL.md` and the binary for your platform (Linux or macOS, amd64 or arm64) from the latest GitHub release into `~/.claude/skills/tui-capture/`, verifying checksums:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thinkbig1979/tui-goggles/main/install.sh | sh
+```
+
+Set `VERSION=v0.2.0` to pin a release or `SKILL_DIR=...` to install elsewhere. Run it again to update. Each release also has a `tui-capture-skill_<os>_<arch>.zip` with the same contents.
+
+### Binary only
+
 With Go 1.21 or later:
 
 ```bash
 go install github.com/thinkbig1979/tui-goggles/cmd/tui-goggles@latest
 ```
 
-Or from a checkout:
+Or download `tui-goggles_<os>_<arch>` from the [releases page](https://github.com/thinkbig1979/tui-goggles/releases), or build from a checkout:
 
 ```bash
-cd tui-goggles
 go build -o bin/tui-goggles ./cmd/tui-goggles
 ```
+
+### Releasing
+
+Push a version tag; the release workflow runs the tests, builds all platforms with `scripts/package.sh` and publishes the binaries, skill zips, `SKILL.md` and `checksums.txt` as release assets:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`scripts/package.sh v0.0.0-test /tmp/out` builds the same artifacts locally. Nothing built is committed to the repo.
 
 ## Usage
 

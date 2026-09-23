@@ -59,6 +59,9 @@ import (
 	"github.com/thinkbig1979/tui-goggles/internal/terminal"
 )
 
+// version is set at release build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 // Exit codes
 const (
 	ExitSuccess         = 0
@@ -94,6 +97,7 @@ type config struct {
 	script        string
 	styles        bool
 	assertStyles  []string
+	showVersion   bool
 }
 
 // arrayFlag allows multiple flags of the same type
@@ -110,6 +114,10 @@ func (a *arrayFlag) Set(value string) error {
 
 func main() {
 	cfg := parseFlags()
+	if cfg.showVersion {
+		fmt.Println("tui-goggles", version)
+		return
+	}
 
 	// Find command separator
 	args := flag.Args()
@@ -157,6 +165,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.bg, "bg", "#000000", "Background color reported to the app (OSC 11 query); use a light color to test light themes")
 	flag.BoolVar(&cfg.styles, "styles", false, "Include styled spans (colors, bold, reverse, ...) in the output")
 	flag.Var(&assertStyles, "assert-style", "Assert cell styles, e.g. 'text=\"Tab 2\" reverse bold' or '0,0,5 fg=#ff0000' (repeatable, exit code 3 if not met)")
+	flag.BoolVar(&cfg.showVersion, "version", false, "Print the version and exit")
 	flag.StringVar(&cfg.script, "script", "", "Run a step script from this file ('-' for stdin); see SKILL.md")
 	flag.DurationVar(&cfg.grace, "grace", time.Second, "On exit, time the app gets to quit after SIGHUP before SIGKILL (0 = kill immediately)")
 

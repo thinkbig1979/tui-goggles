@@ -22,3 +22,6 @@ go.work
 # OS
 .DS_Store
 testapps/bt2probe/bt2probe
+
+# Release artifacts (built by scripts/package.sh; published as GitHub release assets)
+dist/

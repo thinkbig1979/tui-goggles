@@ -15,6 +15,9 @@ This skill bundles `tui-goggles`. Use this path in all commands:
 ~/.claude/skills/tui-capture/bin/tui-goggles
 ```
 
+Check the installed version with `-version`. To install or update the skill:
+`curl -fsSL https://raw.githubusercontent.com/thinkbig1979/tui-goggles/main/install.sh | sh`
+
 ## Recommended Usage for Agents
 
 **Always use JSON format with trim for structured output:**
@@ -94,6 +97,7 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 | `-quiet` | false | Suppress output on success |
 | `-env` | | Set env var for command (KEY=VALUE, repeatable) |
 | `-script` | "" | Run a step script from a file (`-` = stdin); see Scripts |
+| `-version` | | Print the version and exit |
 | `-styles` | false | Add styled spans (colors, attributes) to the output |
 | `-assert-style` | | Assert cell styles on the final screen (repeatable, exit 3 if not met) |
 | `-fg` | #ffffff | Foreground color reported for OSC 10/12 queries |
