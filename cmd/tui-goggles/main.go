@@ -52,6 +52,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/your-username/tui-goggles/internal/input"
 	"github.com/your-username/tui-goggles/internal/terminal"
 )
 
@@ -270,8 +271,12 @@ func run(command string, args []string, cfg config) int {
 				if part == "" {
 					continue
 				}
-				key := parseKey(part)
-				if err := term.SendKeys(string(key)); err != nil {
+				key, err := parseKey(part)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					return ExitGeneralError
+				}
+				if err := term.SendKeys(key); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: sending key %q: %v\n", part, err)
 					return ExitGeneralError
 				}
@@ -457,8 +462,11 @@ func sendKeys(term *terminal.Terminal, keys string, inputDelay time.Duration) er
 		if part == "" {
 			continue
 		}
-		key := parseKey(part)
-		if err := term.SendKeys(string(key)); err != nil {
+		key, err := parseKey(part)
+		if err != nil {
+			return err
+		}
+		if err := term.SendKeys(key); err != nil {
 			return err
 		}
 		// Delay between keys
@@ -468,114 +476,18 @@ func sendKeys(term *terminal.Terminal, keys string, inputDelay time.Duration) er
 	return nil
 }
 
-func parseKey(s string) terminal.Key {
-	switch strings.ToLower(s) {
-	case "up":
-		return terminal.KeyUp
-	case "down":
-		return terminal.KeyDown
-	case "left":
-		return terminal.KeyLeft
-	case "right":
-		return terminal.KeyRight
-	case "enter", "return":
-		return terminal.KeyEnter
-	case "tab":
-		return terminal.KeyTab
-	case "esc", "escape":
-		return terminal.KeyEscape
-	case "backspace":
-		return terminal.KeyBackspace
-	case "delete":
-		return terminal.KeyDelete
-	case "home":
-		return terminal.KeyHome
-	case "end":
-		return terminal.KeyEnd
-	case "pgup", "pageup":
-		return terminal.KeyPgUp
-	case "pgdn", "pagedown":
-		return terminal.KeyPgDn
-	case "space":
-		return terminal.KeySpace
-	case "f1":
-		return terminal.KeyF1
-	case "f2":
-		return terminal.KeyF2
-	case "f3":
-		return terminal.KeyF3
-	case "f4":
-		return terminal.KeyF4
-	case "f5":
-		return terminal.KeyF5
-	case "f6":
-		return terminal.KeyF6
-	case "f7":
-		return terminal.KeyF7
-	case "f8":
-		return terminal.KeyF8
-	case "f9":
-		return terminal.KeyF9
-	case "f10":
-		return terminal.KeyF10
-	case "f11":
-		return terminal.KeyF11
-	case "f12":
-		return terminal.KeyF12
-	case "ctrl-a":
-		return terminal.KeyCtrlA
-	case "ctrl-b":
-		return terminal.KeyCtrlB
-	case "ctrl-c":
-		return terminal.KeyCtrlC
-	case "ctrl-d":
-		return terminal.KeyCtrlD
-	case "ctrl-e":
-		return terminal.KeyCtrlE
-	case "ctrl-f":
-		return terminal.KeyCtrlF
-	case "ctrl-g":
-		return terminal.KeyCtrlG
-	case "ctrl-h":
-		return terminal.KeyCtrlH
-	case "ctrl-i":
-		return terminal.KeyCtrlI
-	case "ctrl-j":
-		return terminal.KeyCtrlJ
-	case "ctrl-k":
-		return terminal.KeyCtrlK
-	case "ctrl-l":
-		return terminal.KeyCtrlL
-	case "ctrl-n":
-		return terminal.KeyCtrlN
-	case "ctrl-o":
-		return terminal.KeyCtrlO
-	case "ctrl-p":
-		return terminal.KeyCtrlP
-	case "ctrl-q":
-		return terminal.KeyCtrlQ
-	case "ctrl-r":
-		return terminal.KeyCtrlR
-	case "ctrl-s":
-		return terminal.KeyCtrlS
-	case "ctrl-t":
-		return terminal.KeyCtrlT
-	case "ctrl-u":
-		return terminal.KeyCtrlU
-	case "ctrl-v":
-		return terminal.KeyCtrlV
-	case "ctrl-w":
-		return terminal.KeyCtrlW
-	case "ctrl-x":
-		return terminal.KeyCtrlX
-	case "ctrl-y":
-		return terminal.KeyCtrlY
-	case "ctrl-z":
-		return terminal.KeyCtrlZ
-	default:
-		// Treat as literal string
-		return terminal.Key(s)
+// parseKey converts one -keys token into the bytes to send.
+// Key specifications (see input.EncodeKey) are encoded; anything else is
+// sent as literal text.
+func parseKey(s string) (string, error) {
+	seq, ok, err := input.EncodeKey(s)
+	if err != nil {
+		return "", err
 	}
+	if !ok {
+		return s, nil
+	}
+	return seq, nil
 }
 
 func formatJSON(result CaptureResult) string {

@@ -130,25 +130,40 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 
 ## Sending Keys
 
-Use `-keys` with space-separated key names:
+Use `-keys` with space-separated tokens. Each token is a key specification or literal text:
 
 ```bash
 # Navigate down twice and press enter
 ~/.claude/skills/tui-capture/bin/tui-goggles -keys "down down enter" -- ./my-tui-app
 
-# Type literal text
-~/.claude/skills/tui-capture/bin/tui-goggles -keys "h e l l o" -- ./my-tui-app
+# Type literal text: a token that is not a key name is sent as-is
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "hello enter" -- ./my-tui-app
+
+# Modified keys
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "shift+tab alt+left ctrl+pgdn shift+up ctrl+home" -- ./my-tui-app
 
 # Read complex sequences from stdin
 echo -e "down\ndown\nenter" | ~/.claude/skills/tui-capture/bin/tui-goggles -keys-stdin -- ./app
 ```
 
-**Key names:**
-- Navigation: `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`
-- Actions: `enter`, `tab`, `esc`, `backspace`, `delete`, `space`
+**Key names** (case-insensitive):
+- Navigation: `up`, `down`, `left`, `right`, `home`, `end`, `pgup`/`pageup`, `pgdn`/`pagedown`, `insert`, `delete`
+- Actions: `enter`/`return`, `tab`, `esc`/`escape`, `backspace`, `space`, `backtab` (= `shift+tab`)
 - Function keys: `f1` through `f12`
-- Ctrl combos: `ctrl-a` through `ctrl-z`
-- Literal characters: any single character
+- Any single character, e.g. `x`, `/`, `?`
+
+**Modifiers:** `ctrl`, `alt`, `shift`, `meta`, joined with `+` or `-` in any order: `ctrl+left`, `alt-x`, `ctrl+shift+right`, `shift+f5`. Keys are encoded the way xterm sends them:
+
+| Key kind | Encoding | Examples |
+|----------|----------|----------|
+| Arrows, home, end, F1-F4 | `CSI 1;m X` | `alt+left` = `\e[1;3D`, `ctrl+home` = `\e[1;5H` |
+| pgup, pgdn, insert, delete, F5-F12 | `CSI n;m ~` | `ctrl+pgup` = `\e[5;5~` |
+| `shift+tab` | `CSI Z` | |
+| `alt+<char or key>` | ESC prefix | `alt+x` = `\ex`, `alt+enter` = `\e\r` |
+| `ctrl+<letter>` | C0 control byte | `ctrl+c` = `\x03`, `ctrl+space` = `\x00` |
+| `shift+<letter>` | Upper-case letter | `shift+a` = `A` |
+
+`m` = 1 + shift(1) + alt(2) + ctrl(4) + meta(8). Combinations with no legacy xterm encoding (`shift+enter`, `ctrl+tab`, `ctrl+shift+a`) are rejected with exit 1 rather than silently mis-sent. Note that `ctrl+m`, `ctrl+i` and `ctrl+[` send the same bytes as `enter`, `tab` and `esc`, so the app sees those keys.
 
 ## Common Patterns
 

@@ -111,7 +111,7 @@ For the `-keys` flag, use these names (space-separated):
 - **Navigation**: `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`
 - **Actions**: `enter`, `tab`, `esc`, `backspace`, `delete`, `space`
 - **Function keys**: `f1` through `f12`
-- **Ctrl combinations**: `ctrl-a` through `ctrl-z`
+- **Modifiers**: `ctrl`, `alt`, `shift`, `meta` joined with `+` or `-`, e.g. `ctrl-a`, `shift+tab`, `alt+left`, `ctrl+pgup`, `ctrl+shift+right`, `ctrl+space` (xterm encoding, see SKILL.md)
 - **Literal text**: Any other string is sent as-is
 
 ### JSON Output Format

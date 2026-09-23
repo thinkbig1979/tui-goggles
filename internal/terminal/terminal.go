@@ -384,11 +384,6 @@ func (t *Terminal) SendKeys(keys string) error {
 	return err
 }
 
-// SendKey sends a single key (including special keys) to the application.
-func (t *Terminal) SendKey(key Key) error {
-	return t.SendKeys(string(key))
-}
-
 // Wait waits for the command to exit.
 func (t *Terminal) Wait() error {
 	<-t.done

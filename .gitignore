@@ -21,3 +21,4 @@ go.work
 
 # OS
 .DS_Store
+testapps/bt2probe/bt2probe
