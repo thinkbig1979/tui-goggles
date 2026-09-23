@@ -129,3 +129,20 @@ func TestExitStatusWhenProcessExitsOnItsOwn(t *testing.T) {
 		t.Errorf("ExitStatus() = %+v; want exited with code 3", st)
 	}
 }
+
+func TestWaitForTextGone(t *testing.T) {
+	term, err := New("sh", []string{"-c", `printf 'Loading'; sleep 0.3; printf '\r       \rDone'; sleep 5`}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	if err := term.WaitForText("Loading", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := term.WaitForTextGone("Loading", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := term.WaitForTextGone("Done", 200*time.Millisecond); err == nil {
+		t.Error("WaitForTextGone(Done) succeeded; want timeout")
+	}
+}

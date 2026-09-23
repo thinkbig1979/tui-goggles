@@ -54,6 +54,7 @@ tui-goggles [flags] -- command [args...]
 | `-trim` | false | Trim trailing blank lines from output |
 | `-quiet` | false | Suppress output on success (useful with `-assert`) |
 | `-env` | | Set environment variable (format: KEY=VALUE, repeatable) |
+| `-script` | "" | Run a step script (one step per line: key, type, paste, click, resize, wait-for, wait-gone, capture, assert, ...) from a file or `-` for stdin; see SKILL.md |
 | `-fg` | #ffffff | Foreground color reported for OSC 10/12 queries |
 | `-bg` | #000000 | Background color reported for OSC 11 queries (e.g. `#fdf6e3` to test a light theme) |
 | `-grace` | 1s | On exit, time the app gets after SIGHUP before SIGKILL (0 = kill at once) |

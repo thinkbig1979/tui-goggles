@@ -93,6 +93,7 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 | `-trim` | false | Remove trailing blank lines |
 | `-quiet` | false | Suppress output on success |
 | `-env` | | Set env var for command (KEY=VALUE, repeatable) |
+| `-script` | "" | Run a step script from a file (`-` = stdin); see Scripts |
 | `-fg` | #ffffff | Foreground color reported for OSC 10/12 queries |
 | `-bg` | #000000 | Background color reported for OSC 11 queries (e.g. `#fdf6e3` to test a light theme) |
 | `-grace` | 1s | On exit, time the app gets after SIGHUP before SIGKILL (0 = kill at once) |
@@ -191,6 +192,52 @@ printf 'type:"x y"\npaste:"p q" enter\n' | ~/.claude/skills/tui-capture/bin/tui-
 ```
 
 A quote that is never closed, or a bad `\x` escape, fails with exit 1 before the app starts.
+
+## Scripts: Many Steps in One Run
+
+`-script FILE` (or `-script -` for stdin) runs one step per line against a single running app, so one run can drive the app through many states and check each one. `-keys` is for short sequences; use a script when you need waits, asserts or named captures between inputs.
+
+```
+# comment lines start with #
+wait-for Ready                 # wait until text appears (up to -stable-timeout)
+key alt+right ctrl+pgdn        # one or more -keys tokens (keys, mouse, type:, paste:, resize:)
+type hello world               # rest of the line typed verbatim
+paste line one\nline two       # rest of the line as a bracketed paste
+click 12,0                     # mouse verbs take the same X,Y[,button] arguments
+shift+click 12,0 right
+drag 5,3 20,3                  # or drag 5,3-20,3
+wheel-down 10,5
+resize 100x30
+wait-gone Loading              # wait until text disappears
+wait-stable                    # wait until the screen stops changing
+sleep 200ms
+capture after-save             # record the screen under a name
+assert Saved                   # exit 3 unless the text is on screen
+assert-not Error               # exit 3 if the text is on screen
+```
+
+Text arguments run to the end of the line; one pair of surrounding quotes is removed (`assert "  padded "`) and backslash escapes work as in `-keys`. `capture` and `assert` wait for the screen to be stable first. Each input step is followed by `-input-delay`.
+
+The run stops at the first failing step: `assert`/`assert-not` exit 3, a `wait-for`/`wait-gone` that times out exits 2. The failing step is named on stderr and in the output, and the screen at that moment is added as a capture named `failure`. With no `capture` steps, the final screen is captured as `final`. `-assert`/`-check` flags apply to the screen at the end of the script. `-capture-each` captures after every input step.
+
+```bash
+~/.claude/skills/tui-capture/bin/tui-goggles -script steps.txt -format json -trim -- ./app
+```
+
+```json
+{
+  "captures": [
+    {"name": "after-save", "line": 12, "screen": "...", "cursor_row": 3, ...},
+    {"name": "failure", "line": 14, "screen": "...", ...}
+  ],
+  "command": "./app",
+  "steps_run": 13,
+  "failed": {"line": 14, "step": "assert Saved", "error": "text \"Saved\" not found on screen"},
+  "process": {"ended_by": "hangup", "exit_code": 0}
+}
+```
+
+Text format prints each capture under a `--- name (line N) ---` header. `-script` cannot be combined with `-keys`/`-keys-stdin`.
 
 ## Terminal Queries
 

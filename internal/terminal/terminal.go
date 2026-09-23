@@ -267,6 +267,20 @@ func (t *Terminal) WaitForText(text string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for text: %q", text)
 }
 
+// WaitForTextGone waits until the specified text is no longer on screen.
+func (t *Terminal) WaitForTextGone(text string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if !containsText(t.Screenshot(), text) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout waiting for text to disappear: %q", text)
+}
+
 // Close ends the command the way closing a real terminal window would: it
 // sends SIGHUP to the process group and waits up to the grace period for the
 // process to exit (so it can save state), then sends SIGKILL. The PTY stays

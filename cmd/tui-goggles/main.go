@@ -50,9 +50,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/your-username/tui-goggles/internal/input"
+	"github.com/your-username/tui-goggles/internal/script"
 	"github.com/your-username/tui-goggles/internal/terminal"
 )
 
@@ -88,6 +90,7 @@ type config struct {
 	grace         time.Duration
 	fg            string
 	bg            string
+	script        string
 }
 
 // arrayFlag allows multiple flags of the same type
@@ -148,6 +151,7 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.inputDelay, "input-delay", 50*time.Millisecond, "Delay between keystrokes")
 	flag.StringVar(&cfg.fg, "fg", "#ffffff", "Foreground color reported to the app (OSC 10/12 queries)")
 	flag.StringVar(&cfg.bg, "bg", "#000000", "Background color reported to the app (OSC 11 query); use a light color to test light themes")
+	flag.StringVar(&cfg.script, "script", "", "Run a step script from this file ('-' for stdin); see SKILL.md")
 	flag.DurationVar(&cfg.grace, "grace", time.Second, "On exit, time the app gets to quit after SIGHUP before SIGKILL (0 = kill immediately)")
 
 	flag.Parse()
@@ -160,6 +164,9 @@ func parseFlags() config {
 
 // CaptureResult contains the captured screenshot and metadata.
 type CaptureResult struct {
+	// Name and Line identify captures in -script mode.
+	Name          string          `json:"name,omitempty"`
+	Line          int             `json:"line,omitempty"`
 	Screen        string          `json:"screen"`
 	Cols          int             `json:"cols"`
 	Rows          int             `json:"rows"`
@@ -195,11 +202,23 @@ func run(command string, args []string, cfg config) int {
 	startTime := time.Now()
 	timing := &TimingInfo{}
 
-	// Parse all key tokens up front so syntax errors fail before the app starts
+	// Parse all key tokens and the script up front so syntax errors fail
+	// before the app starts
+	if cfg.script != "" && (cfg.keys != "" || cfg.keysStdin) {
+		fmt.Fprintln(os.Stderr, "Error: -script cannot be combined with -keys or -keys-stdin; use key steps in the script")
+		return ExitGeneralError
+	}
 	actions, err := parseActions(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitGeneralError
+	}
+	var steps []script.Step
+	if cfg.script != "" {
+		if steps, err = loadScript(cfg.script); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return ExitGeneralError
+		}
 	}
 
 	// Create terminal with environment variables
@@ -220,12 +239,12 @@ func run(command string, args []string, cfg config) int {
 	defer term.Close()
 
 	// Set up overall timeout
-	timedOut := false
+	var timedOut atomic.Bool
 	done := make(chan struct{})
 	go func() {
 		select {
 		case <-time.After(cfg.timeout):
-			timedOut = true
+			timedOut.Store(true)
 			term.Close()
 		case <-done:
 		}
@@ -243,7 +262,7 @@ func run(command string, args []string, cfg config) int {
 		err := term.WaitForText(cfg.waitForText, cfg.stableTimeout)
 		timing.WaitForTextMs = time.Since(waitStart).Milliseconds()
 		if err != nil {
-			if timedOut {
+			if timedOut.Load() {
 				fmt.Fprintf(os.Stderr, "Error: timeout waiting for text %q\n", cfg.waitForText)
 				return ExitTimeout
 			}
@@ -257,6 +276,10 @@ func run(command string, args []string, cfg config) int {
 		stabilizeStart := time.Now()
 		_ = term.WaitForStable(cfg.stableTimeout, cfg.stableTime)
 		timing.StabilizeMs = time.Since(stabilizeStart).Milliseconds()
+	}
+
+	if cfg.script != "" {
+		return runScript(term, steps, command, args, cfg, timing, startTime, &timedOut)
 	}
 
 	var results []CaptureResult
@@ -349,7 +372,7 @@ func run(command string, args []string, cfg config) int {
 		outputResult(finalResult, results, cfg, timing)
 	}
 
-	if timedOut {
+	if timedOut.Load() {
 		return ExitTimeout
 	}
 	if exitedOnItsOwn && status.ExitCode != 0 {
@@ -466,7 +489,11 @@ func outputResult(result CaptureResult, multiResults []CaptureResult, cfg config
 		output = result.Screen
 	}
 
-	// Write to file or stdout
+	writeOutput(output, cfg)
+}
+
+// writeOutput writes output to the -output file or stdout.
+func writeOutput(output string, cfg config) {
 	if cfg.outputFile != "" {
 		err := os.WriteFile(cfg.outputFile, []byte(output), 0644)
 		if err != nil {
@@ -517,10 +544,14 @@ func warnMouseMode(term *terminal.Terminal, action input.Action) {
 }
 
 func formatJSON(result CaptureResult) string {
+	return formatAnyJSON(result)
+}
+
+func formatAnyJSON(v any) string {
 	var buf strings.Builder
 	enc := json.NewEncoder(&buf)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(result)
+	_ = enc.Encode(v)
 	return buf.String()
 }
 
