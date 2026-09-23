@@ -93,6 +93,8 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 | `-trim` | false | Remove trailing blank lines |
 | `-quiet` | false | Suppress output on success |
 | `-env` | | Set env var for command (KEY=VALUE, repeatable) |
+| `-fg` | #ffffff | Foreground color reported for OSC 10/12 queries |
+| `-bg` | #000000 | Background color reported for OSC 11 queries (e.g. `#fdf6e3` to test a light theme) |
 | `-grace` | 1s | On exit, time the app gets after SIGHUP before SIGKILL (0 = kill at once) |
 
 ## JSON Output Format
@@ -189,6 +191,21 @@ printf 'type:"x y"\npaste:"p q" enter\n' | ~/.claude/skills/tui-capture/bin/tui-
 ```
 
 A quote that is never closed, or a bad `\x` escape, fails with exit 1 before the app starts.
+
+## Terminal Queries
+
+TUI frameworks query the terminal at startup. tui-goggles answers like a VT220-class xterm with no optional extras, so apps pick safe fallbacks instead of waiting or enabling features the emulator can't render:
+
+| Query | Reply |
+|-------|-------|
+| DA1 `CSI c` / DA2 `CSI > c` | VT220 with ANSI color / `>1;0;0` |
+| XTVERSION `CSI > q` | `tui-goggles` |
+| OSC 10 / 11 / 12 color queries | `-fg` / `-bg` / `-fg` |
+| DECRQM `CSI ? Ps $ p` | set or reset for modes the emulator implements (cursor keys, wrap, cursor visibility, alt screen, mouse 1000/1002/1003/1006, focus 1004, bracketed paste 2004); **not recognized** for everything else, including synchronized output (2026) and grapheme clustering (2027) |
+| DSR `CSI 6 n`, window size `CSI 14/18/19 t` | cursor position, live size |
+| Kitty keyboard `CSI ? u`, palette, clipboard | not answered (unsupported), so keys stay in xterm encoding |
+
+Sequences split across reads are handled. Sequences the emulator would misread (kitty keyboard push/pop, modifyOtherKeys, cursor style, colon-form SGR like `4:3` or `38:2::r:g:b`) are filtered or normalized so they don't move the cursor or reset styles. `-env TERM=...` overrides the default `TERM=xterm-256color`.
 
 ## Resizing and Shutdown
 

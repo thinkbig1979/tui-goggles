@@ -25,6 +25,8 @@ const maxTerminalDimension = math.MaxUint16
 type Terminal struct {
 	cmd     *exec.Cmd
 	ptyFile *os.File
+	writeMu sync.Mutex // serializes input and query replies to the PTY
+	resp    *responder
 	vt      vt10x.Terminal
 	rows    int
 	cols    int
@@ -44,6 +46,9 @@ type Options struct {
 	Rows int
 	Cols int
 	Env  []string
+	// FG and BG are the colors reported for OSC 10 and OSC 11 queries, as
+	// "#rrggbb". They default to white on black.
+	FG, BG string
 	// Grace is how long Close waits for the process to exit after SIGHUP
 	// before sending SIGKILL. Zero kills immediately.
 	Grace time.Duration
@@ -74,9 +79,20 @@ func New(command string, args []string, opts Options) (*Terminal, error) {
 		return nil, fmt.Errorf("cols must be between 0 and %d", maxTerminalDimension)
 	}
 
+	fg, err := ParseColor(defaultString(opts.FG, "#ffffff"))
+	if err != nil {
+		return nil, fmt.Errorf("foreground: %w", err)
+	}
+	bg, err := ParseColor(defaultString(opts.BG, "#000000"))
+	if err != nil {
+		return nil, fmt.Errorf("background: %w", err)
+	}
+
 	cmd := exec.Command(command, args...)
-	cmd.Env = append(os.Environ(), opts.Env...)
-	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
+	// TERM goes before opts.Env so -env TERM=... can override it (for
+	// duplicate keys, the last one wins).
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(cmd.Env, opts.Env...)
 
 	// Start command with PTY first so we can use it as the vt10x writer
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -87,23 +103,22 @@ func New(command string, args []string, opts Options) (*Terminal, error) {
 		return nil, fmt.Errorf("failed to start PTY: %w", err)
 	}
 
-	// Create virtual terminal with PTY as writer for built-in query responses
-	// vt10x will automatically respond to DSR (ESC[5n, ESC[6n) queries
-	vt := vt10x.New(
-		vt10x.WithSize(opts.Cols, opts.Rows),
-		vt10x.WithWriter(ptmx),
-	)
-
 	t := &Terminal{
 		cmd:     cmd,
 		ptyFile: ptmx,
-		vt:      vt,
 		rows:    opts.Rows,
 		cols:    opts.Cols,
 		done:    make(chan struct{}),
 		exited:  make(chan struct{}),
 		grace:   opts.Grace,
 	}
+	// Create virtual terminal with PTY as writer for built-in query responses
+	// vt10x will automatically respond to DSR (ESC[5n, ESC[6n) queries
+	t.vt = vt10x.New(
+		vt10x.WithSize(opts.Cols, opts.Rows),
+		vt10x.WithWriter(lockedWriter{w: ptmx, mu: &t.writeMu}),
+	)
+	t.resp = newResponder(ptmx, &t.writeMu, t.Size, fg, bg)
 
 	// Start reading from PTY and feeding to virtual terminal
 	go t.readLoop()
@@ -129,6 +144,7 @@ func (t *Terminal) readLoop() {
 	for {
 		n, err := reader.Read(buf)
 		if err != nil {
+			t.write(t.resp.flush())
 			if err != io.EOF {
 				t.mu.Lock()
 				t.err = err
@@ -138,240 +154,44 @@ func (t *Terminal) readLoop() {
 		}
 
 		if n > 0 {
-			data := buf[:n]
-
-			// Scan for and respond to terminal queries before passing to vt10x
-			data = t.handleTerminalQueries(data)
-
-			if len(data) > 0 {
-				t.mu.Lock()
-				_, _ = t.vt.Write(data)
-				t.mu.Unlock()
-			}
+			// Answer terminal queries and filter what vt10x can't parse
+			t.write(t.resp.process(buf[:n]))
 		}
 	}
 }
 
-// handleTerminalQueries scans the output for terminal queries and responds to them.
-// It returns the data with query sequences removed (they shouldn't be rendered).
-func (t *Terminal) handleTerminalQueries(data []byte) []byte {
-	result := make([]byte, 0, len(data))
-	i := 0
-
-	for i < len(data) {
-		if data[i] == 0x1b && i+1 < len(data) {
-			if skip := t.tryHandleQuery(data, i); skip > 0 {
-				i += skip
-				continue
-			}
-		}
-		result = append(result, data[i])
-		i++
+func (t *Terminal) write(data []byte) {
+	if len(data) > 0 {
+		t.mu.Lock()
+		_, _ = t.vt.Write(data)
+		t.mu.Unlock()
 	}
-
-	return result
 }
 
-// tryHandleQuery checks if there's a terminal query at position i and handles it.
-// Returns the number of bytes to skip if a query was handled, 0 otherwise.
-func (t *Terminal) tryHandleQuery(data []byte, i int) int {
-	// CSI sequences: ESC [
-	if skip := t.tryHandleCSIQuery(data, i); skip > 0 {
-		return skip
-	}
-	// OSC sequences: ESC ]
-	if skip := t.tryHandleOSCQuery(data, i); skip > 0 {
-		return skip
-	}
-	return 0
+// lockedWriter serializes writes to the PTY.
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
 }
 
-// tryHandleCSIQuery handles CSI (Control Sequence Introducer) queries.
-func (t *Terminal) tryHandleCSIQuery(data []byte, i int) int {
-	if i+2 >= len(data) || data[i+1] != '[' {
-		return 0
-	}
-
-	// Note: DSR (ESC[5n, ESC[6n) is now handled by vt10x via WithWriter
-
-	// DA1 (Primary Device Attributes): ESC [ c
-	if data[i+2] == 'c' {
-		t.respondToDA1()
-		return 3
-	}
-
-	// DA1 alternate form: ESC [ 0 c
-	if i+3 < len(data) && data[i+2] == '0' && data[i+3] == 'c' {
-		t.respondToDA1()
-		return 4
-	}
-
-	// DA2 (Secondary Device Attributes): ESC [ > c or ESC [ > 0 c
-	if data[i+2] == '>' {
-		if i+3 < len(data) && data[i+3] == 'c' {
-			t.respondToDA2()
-			return 4
-		}
-		if i+4 < len(data) && data[i+3] == '0' && data[i+4] == 'c' {
-			t.respondToDA2()
-			return 5
-		}
-	}
-
-	// XTWINOPS - terminal size queries: ESC [ 1 4 t, ESC [ 1 8 t, ESC [ 1 9 t
-	if skip := t.tryHandleXTWINOPS(data, i); skip > 0 {
-		return skip
-	}
-
-	return 0
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
-// tryHandleXTWINOPS handles xterm window operations (size queries).
-func (t *Terminal) tryHandleXTWINOPS(data []byte, i int) int {
-	// Need at least ESC [ N N t
-	if i+4 >= len(data) {
-		return 0
+func defaultString(s, def string) string {
+	if s == "" {
+		return def
 	}
-
-	// Check for ESC [ 1 ...
-	if data[i+2] != '1' {
-		return 0
-	}
-
-	// ESC [ 1 4 t - report window size in pixels (we fake it)
-	if data[i+3] == '4' && data[i+4] == 't' {
-		t.respondToWindowSizePixels()
-		return 5
-	}
-
-	// ESC [ 1 8 t - report text area size in chars
-	if data[i+3] == '8' && data[i+4] == 't' {
-		t.respondToTextAreaSize()
-		return 5
-	}
-
-	// ESC [ 1 9 t - report screen size in chars
-	if data[i+3] == '9' && data[i+4] == 't' {
-		t.respondToScreenSize()
-		return 5
-	}
-
-	return 0
+	return s
 }
 
-// tryHandleOSCQuery handles OSC (Operating System Command) queries.
-func (t *Terminal) tryHandleOSCQuery(data []byte, i int) int {
-	if i+4 >= len(data) || data[i+1] != ']' {
-		return 0
-	}
-
-	// Background color query: ESC ] 11 ; ...
-	if data[i+2] == '1' && data[i+3] == '1' && data[i+4] == ';' {
-		if end := t.findOSCEnd(data, i+5); end > i {
-			t.respondToBackgroundColorQuery()
-			return end - i
-		}
-	}
-
-	// Foreground color query: ESC ] 10 ; ...
-	if data[i+2] == '1' && data[i+3] == '0' && data[i+4] == ';' {
-		if end := t.findOSCEnd(data, i+5); end > i {
-			t.respondToForegroundColorQuery()
-			return end - i
-		}
-	}
-
-	return 0
-}
-
-// findOSCEnd finds the end of an OSC sequence starting from offset.
-// Returns the position after the terminator, or -1 if not found.
-func (t *Terminal) findOSCEnd(data []byte, offset int) int {
-	for i := offset; i < len(data); i++ {
-		// BEL (0x07) terminates OSC
-		if data[i] == 0x07 {
-			return i + 1
-		}
-		// ST (ESC \) terminates OSC
-		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
-			return i + 2
-		}
-	}
-	return -1
-}
-
-// respondToDA1 sends primary device attributes response.
-// This tells the application we're a VT220-compatible terminal.
-// Response: ESC [ ? 6 2 ; 4 c (VT220 with sixel - even though we don't render it)
-func (t *Terminal) respondToDA1() {
-	// VT220 response with common capabilities
-	// 62 = VT220, 4 = sixel (claim support for better compat)
-	response := "\x1b[?62;4c"
-	_, _ = t.ptyFile.WriteString(response)
-}
-
-// respondToDA2 sends secondary device attributes response.
-// Response: ESC [ > Pp ; Pv ; Pc c
-// Pp=1 (VT220), Pv=0 (firmware version), Pc=0 (ROM cartridge)
-func (t *Terminal) respondToDA2() {
-	// Identify as VT220, version 0
-	response := "\x1b[>1;0;0c"
-	_, _ = t.ptyFile.WriteString(response)
-}
-
-// respondToWindowSizePixels responds to XTWINOPS 14 (window size in pixels).
-// Response: ESC [ 4 ; height ; width t
-func (t *Terminal) respondToWindowSizePixels() {
-	t.mu.Lock()
-	rows := t.rows
-	cols := t.cols
-	t.mu.Unlock()
-
-	// Fake pixel size: assume 8x16 character cells (common default)
-	height := rows * 16
-	width := cols * 8
-	response := fmt.Sprintf("\x1b[4;%d;%dt", height, width)
-	_, _ = t.ptyFile.WriteString(response)
-}
-
-// respondToTextAreaSize responds to XTWINOPS 18 (text area size in chars).
-// Response: ESC [ 8 ; rows ; cols t
-func (t *Terminal) respondToTextAreaSize() {
-	t.mu.Lock()
-	rows := t.rows
-	cols := t.cols
-	t.mu.Unlock()
-
-	response := fmt.Sprintf("\x1b[8;%d;%dt", rows, cols)
-	_, _ = t.ptyFile.WriteString(response)
-}
-
-// respondToScreenSize responds to XTWINOPS 19 (screen size in chars).
-// Response: ESC [ 9 ; rows ; cols t
-func (t *Terminal) respondToScreenSize() {
-	t.mu.Lock()
-	rows := t.rows
-	cols := t.cols
-	t.mu.Unlock()
-
-	response := fmt.Sprintf("\x1b[9;%d;%dt", rows, cols)
-	_, _ = t.ptyFile.WriteString(response)
-}
-
-// respondToBackgroundColorQuery sends a response for OSC 11 query.
-// Response format: ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST
-func (t *Terminal) respondToBackgroundColorQuery() {
-	// Return black background (common default)
-	response := "\x1b]11;rgb:0000/0000/0000\x1b\\"
-	_, _ = t.ptyFile.WriteString(response)
-}
-
-// respondToForegroundColorQuery sends a response for OSC 10 query.
-// Response format: ESC ] 10 ; rgb:RRRR/GGGG/BBBB ST
-func (t *Terminal) respondToForegroundColorQuery() {
-	// Return white foreground (common default)
-	response := "\x1b]10;rgb:ffff/ffff/ffff\x1b\\"
-	_, _ = t.ptyFile.WriteString(response)
+// PrivateModeSet reports whether the application has set DEC private mode
+// m (for example 2004, bracketed paste). Only modes the emulator tracks are
+// reported; others are always false.
+func (t *Terminal) PrivateModeSet(m int) bool {
+	return t.resp.PrivateMode(m)
 }
 
 // Screenshot captures the current terminal screen as a text grid.
@@ -398,6 +218,8 @@ func (t *Terminal) ScreenshotWithCursor() (screen string, cursorCol, cursorRow i
 
 // SendKeys sends keystrokes to the running application.
 func (t *Terminal) SendKeys(keys string) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 	_, err := t.ptyFile.WriteString(keys)
 	return err
 }

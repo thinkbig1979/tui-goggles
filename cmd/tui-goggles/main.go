@@ -86,6 +86,8 @@ type config struct {
 	envVars       []string
 	inputDelay    time.Duration
 	grace         time.Duration
+	fg            string
+	bg            string
 }
 
 // arrayFlag allows multiple flags of the same type
@@ -144,6 +146,8 @@ func parseFlags() config {
 	flag.StringVar(&cfg.outputFile, "output", "", "Write output to file instead of stdout")
 	flag.Var(&envVars, "env", "Set environment variable for command (format: KEY=VALUE, can be repeated)")
 	flag.DurationVar(&cfg.inputDelay, "input-delay", 50*time.Millisecond, "Delay between keystrokes")
+	flag.StringVar(&cfg.fg, "fg", "#ffffff", "Foreground color reported to the app (OSC 10/12 queries)")
+	flag.StringVar(&cfg.bg, "bg", "#000000", "Background color reported to the app (OSC 11 query); use a light color to test light themes")
 	flag.DurationVar(&cfg.grace, "grace", time.Second, "On exit, time the app gets to quit after SIGHUP before SIGKILL (0 = kill immediately)")
 
 	flag.Parse()
@@ -204,6 +208,8 @@ func run(command string, args []string, cfg config) int {
 		Cols:  cfg.cols,
 		Env:   cfg.envVars,
 		Grace: cfg.grace,
+		FG:    cfg.fg,
+		BG:    cfg.bg,
 	}
 
 	term, err := terminal.New(command, args, termOpts)
@@ -479,6 +485,11 @@ func sendAction(term *terminal.Terminal, action input.Action) error {
 		return term.SendKeys(action.Mouse.Seq)
 	case input.ActionResize:
 		return term.Resize(action.Cols, action.Rows)
+	case input.ActionPaste:
+		if !term.PrivateModeSet(2004) {
+			fmt.Fprintf(os.Stderr, "Warning: %s: the app has not enabled bracketed paste (DECSET 2004); the markers are sent anyway\n", action.Token)
+		}
+		return term.SendKeys(action.Bytes)
 	default:
 		return term.SendKeys(action.Bytes)
 	}
