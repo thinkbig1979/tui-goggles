@@ -4,8 +4,6 @@
 [![CI](https://github.com/thinkbig1979/tui-goggles/actions/workflows/ci.yml/badge.svg)](https://github.com/thinkbig1979/tui-goggles/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/thinkbig1979/tui-goggles)](https://github.com/thinkbig1979/tui-goggles/releases/latest)
 
-This project is developed with AI assistance (Claude Code): code, tests and documentation are written by Claude under human direction.
-
 A tool that allows LLMs and automated systems to "see" TUI (Text User Interface) applications by capturing their rendered output as clean text grids, and to drive them with keyboard, mouse, paste and resize input, check colors and styles, and run multi-step test scripts.
 
 ## Problem Solved
