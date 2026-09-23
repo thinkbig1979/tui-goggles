@@ -97,3 +97,15 @@ func TestParseToken(t *testing.T) {
 		t.Error("ParseToken(ctrl+nope) want error")
 	}
 }
+
+func TestParseTokenResize(t *testing.T) {
+	a, err := ParseToken("resize:100x30")
+	if err != nil || a.Kind != ActionResize || a.Cols != 100 || a.Rows != 30 {
+		t.Errorf("resize:100x30 = %+v, %v", a, err)
+	}
+	for _, bad := range []string{"resize:100", "resize:0x5", "resize:axb", "resize:"} {
+		if _, err := ParseToken(bad); err == nil {
+			t.Errorf("ParseToken(%q) want error", bad)
+		}
+	}
+}

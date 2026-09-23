@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -28,8 +29,14 @@ type Terminal struct {
 	rows    int
 	cols    int
 	mu      sync.Mutex
-	done    chan struct{}
+	done    chan struct{} // closed when the PTY read loop ends
 	err     error
+
+	exited    chan struct{} // closed when the process has exited
+	waitErr   error
+	grace     time.Duration
+	closeOnce sync.Once
+	endedBy   string
 }
 
 // Options configures the terminal emulator.
@@ -37,6 +44,9 @@ type Options struct {
 	Rows int
 	Cols int
 	Env  []string
+	// Grace is how long Close waits for the process to exit after SIGHUP
+	// before sending SIGKILL. Zero kills immediately.
+	Grace time.Duration
 }
 
 // DefaultOptions returns sensible defaults for terminal size.
@@ -91,10 +101,18 @@ func New(command string, args []string, opts Options) (*Terminal, error) {
 		rows:    opts.Rows,
 		cols:    opts.Cols,
 		done:    make(chan struct{}),
+		exited:  make(chan struct{}),
+		grace:   opts.Grace,
 	}
 
 	// Start reading from PTY and feeding to virtual terminal
 	go t.readLoop()
+
+	// Reap the process as soon as it exits
+	go func() {
+		t.waitErr = cmd.Wait()
+		close(t.exited)
+	}()
 
 	return t, nil
 }
@@ -386,8 +404,8 @@ func (t *Terminal) SendKeys(keys string) error {
 
 // Wait waits for the command to exit.
 func (t *Terminal) Wait() error {
-	<-t.done
-	return t.cmd.Wait()
+	<-t.exited
+	return t.waitErr
 }
 
 // WaitForStable waits until the screen content stabilizes (no changes for duration).
@@ -427,45 +445,138 @@ func (t *Terminal) WaitForText(text string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for text: %q", text)
 }
 
-// Close terminates the command and cleans up resources.
+// Close ends the command the way closing a real terminal window would: it
+// sends SIGHUP to the process group and waits up to the grace period for the
+// process to exit (so it can save state), then sends SIGKILL. The PTY stays
+// open and is read during the grace period, so the process never blocks on
+// output while shutting down. Close is safe to call more than once.
 func (t *Terminal) Close() error {
-	if t.cmd.Process != nil {
-		_ = t.cmd.Process.Kill()
-	}
-	if t.ptyFile != nil {
-		_ = t.ptyFile.Close()
-	}
-	<-t.done
+	t.closeOnce.Do(func() {
+		t.endedBy = t.stop()
+		if t.ptyFile != nil {
+			_ = t.ptyFile.Close()
+		}
+		<-t.done
+	})
 	return nil
+}
+
+// stop ends the process and reports how it ended.
+func (t *Terminal) stop() string {
+	select {
+	case <-t.exited:
+		return EndedExited
+	default:
+	}
+	if t.cmd.Process == nil {
+		return EndedExited
+	}
+	// The child is a session leader (pty.Start uses Setsid), so -pid
+	// addresses its whole process group.
+	pgid := -t.cmd.Process.Pid
+
+	if t.grace > 0 {
+		_ = syscall.Kill(pgid, syscall.SIGHUP)
+		select {
+		case <-t.exited:
+			return EndedHangup
+		case <-time.After(t.grace):
+		}
+	}
+	_ = syscall.Kill(pgid, syscall.SIGKILL)
+	<-t.exited
+	return EndedKilled
+}
+
+// How the process ended, as reported by ExitStatus.
+const (
+	EndedExited = "exited" // exited on its own before Close
+	EndedHangup = "hangup" // exited after SIGHUP, within the grace period
+	EndedKilled = "killed" // killed with SIGKILL
+)
+
+// ExitStatus describes how the process ended.
+type ExitStatus struct {
+	// EndedBy is EndedExited, EndedHangup or EndedKilled.
+	EndedBy string `json:"ended_by"`
+	// ExitCode is the exit code, or -1 if the process was ended by a signal.
+	ExitCode int `json:"exit_code"`
+	// Signal names the signal that ended the process, if any.
+	Signal string `json:"signal,omitempty"`
+}
+
+// ExitStatus returns how the process ended. It is only meaningful after Close.
+func (t *Terminal) ExitStatus() ExitStatus {
+	st := ExitStatus{EndedBy: t.endedBy, ExitCode: -1}
+	if t.cmd.ProcessState == nil {
+		return st
+	}
+	st.ExitCode = t.cmd.ProcessState.ExitCode()
+	if ws, ok := t.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		st.Signal = signalName(ws.Signal())
+	}
+	return st
+}
+
+func signalName(sig syscall.Signal) string {
+	switch sig {
+	case syscall.SIGHUP:
+		return "SIGHUP"
+	case syscall.SIGINT:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	case syscall.SIGKILL:
+		return "SIGKILL"
+	case syscall.SIGSEGV:
+		return "SIGSEGV"
+	case syscall.SIGABRT:
+		return "SIGABRT"
+	case syscall.SIGPIPE:
+		return "SIGPIPE"
+	}
+	return fmt.Sprintf("signal %d", int(sig))
+}
+
+// Exited reports whether the process has already exited on its own.
+func (t *Terminal) Exited() bool {
+	select {
+	case <-t.exited:
+		return true
+	default:
+		return false
+	}
 }
 
 // Resize changes the terminal size.
 func (t *Terminal) Resize(cols, rows int) error {
 	// Validate dimensions to prevent overflow
-	if rows < 0 || rows > maxTerminalDimension {
-		return fmt.Errorf("rows must be between 0 and %d", maxTerminalDimension)
+	if rows < 1 || rows > maxTerminalDimension {
+		return fmt.Errorf("rows must be between 1 and %d", maxTerminalDimension)
 	}
-	if cols < 0 || cols > maxTerminalDimension {
-		return fmt.Errorf("cols must be between 0 and %d", maxTerminalDimension)
+	if cols < 1 || cols > maxTerminalDimension {
+		return fmt.Errorf("cols must be between 1 and %d", maxTerminalDimension)
 	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// Resize the emulator first so the redraw the app does on SIGWINCH is
+	// parsed at the new size. Resizing in place keeps the screen contents and
+	// the PTY writer used for query replies.
+	t.vt.Resize(cols, rows)
 
 	err := pty.Setsize(t.ptyFile, &pty.Winsize{
 		Rows: uint16(rows), //nolint:gosec // validated above
 		Cols: uint16(cols), //nolint:gosec // validated above
 	})
 	if err != nil {
+		t.vt.Resize(t.cols, t.rows)
 		return err
 	}
 
 	t.rows = rows
 	t.cols = cols
-
-	// Recreate virtual terminal with new size
-	t.vt = vt10x.New(vt10x.WithSize(cols, rows))
-
 	return nil
 }
 
@@ -478,12 +589,7 @@ func (t *Terminal) Size() (cols, rows int) {
 
 // IsRunning returns true if the command is still running.
 func (t *Terminal) IsRunning() bool {
-	select {
-	case <-t.done:
-		return false
-	default:
-		return true
-	}
+	return !t.Exited()
 }
 
 // containsText checks if the screen contains the given text.

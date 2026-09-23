@@ -85,6 +85,7 @@ type config struct {
 	outputFile    string
 	envVars       []string
 	inputDelay    time.Duration
+	grace         time.Duration
 }
 
 // arrayFlag allows multiple flags of the same type
@@ -143,6 +144,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.outputFile, "output", "", "Write output to file instead of stdout")
 	flag.Var(&envVars, "env", "Set environment variable for command (format: KEY=VALUE, can be repeated)")
 	flag.DurationVar(&cfg.inputDelay, "input-delay", 50*time.Millisecond, "Delay between keystrokes")
+	flag.DurationVar(&cfg.grace, "grace", time.Second, "On exit, time the app gets to quit after SIGHUP before SIGKILL (0 = kill immediately)")
 
 	flag.Parse()
 
@@ -164,6 +166,8 @@ type CaptureResult struct {
 	Command       string          `json:"command"`
 	Checks        map[string]bool `json:"checks,omitempty"`
 	Timing        *TimingInfo     `json:"timing,omitempty"`
+	// Process describes how the app ended (final capture only).
+	Process *terminal.ExitStatus `json:"process,omitempty"`
 }
 
 // TimingInfo contains timing information about the capture.
@@ -177,9 +181,10 @@ type TimingInfo struct {
 
 // MultiCaptureResult contains multiple captures (for -capture-each mode).
 type MultiCaptureResult struct {
-	Captures []CaptureResult `json:"captures"`
-	Command  string          `json:"command"`
-	Timing   *TimingInfo     `json:"timing,omitempty"`
+	Captures []CaptureResult      `json:"captures"`
+	Command  string               `json:"command"`
+	Timing   *TimingInfo          `json:"timing,omitempty"`
+	Process  *terminal.ExitStatus `json:"process,omitempty"`
 }
 
 func run(command string, args []string, cfg config) int {
@@ -195,9 +200,10 @@ func run(command string, args []string, cfg config) int {
 
 	// Create terminal with environment variables
 	termOpts := terminal.Options{
-		Rows: cfg.rows,
-		Cols: cfg.cols,
-		Env:  cfg.envVars,
+		Rows:  cfg.rows,
+		Cols:  cfg.cols,
+		Env:   cfg.envVars,
+		Grace: cfg.grace,
 	}
 
 	term, err := terminal.New(command, args, termOpts)
@@ -310,6 +316,13 @@ func run(command string, args []string, cfg config) int {
 		}
 	}
 
+	// End the app the way closing a terminal would (SIGHUP, then SIGKILL after
+	// the grace period) and record how it ended.
+	exitedOnItsOwn := term.Exited()
+	term.Close()
+	status := term.ExitStatus()
+	finalResult.Process = &status
+
 	// Check assertions against final screen
 	if len(cfg.asserts) > 0 {
 		screen := finalResult.Screen
@@ -332,6 +345,10 @@ func run(command string, args []string, cfg config) int {
 
 	if timedOut {
 		return ExitTimeout
+	}
+	if exitedOnItsOwn && status.ExitCode != 0 {
+		fmt.Fprintf(os.Stderr, "Error: command exited with status %d before capture finished\n", status.ExitCode)
+		return ExitCommandError
 	}
 
 	return ExitSuccess
@@ -375,6 +392,7 @@ func parseActions(cfg config) ([]input.Action, error) {
 
 func captureScreen(term *terminal.Terminal, command string, args []string, cfg config, timing *TimingInfo) CaptureResult {
 	screen, cursorCol, cursorRow, cursorVisible := term.ScreenshotWithCursor()
+	cols, rows := term.Size()
 
 	if cfg.trim {
 		screen = trimTrailingBlankLines(screen)
@@ -382,8 +400,8 @@ func captureScreen(term *terminal.Terminal, command string, args []string, cfg c
 
 	return CaptureResult{
 		Screen:        screen,
-		Cols:          cfg.cols,
-		Rows:          cfg.rows,
+		Cols:          cols,
+		Rows:          rows,
 		CursorCol:     cursorCol,
 		CursorRow:     cursorRow,
 		CursorVisible: cursorVisible,
@@ -418,7 +436,7 @@ func outputResult(result CaptureResult, multiResults []CaptureResult, cfg config
 	switch cfg.outputFormat {
 	case "json":
 		if cfg.captureEach && len(multiResults) > 0 {
-			output = formatMultiJSON(multiResults, result.Command, timing)
+			output = formatMultiJSON(multiResults, result.Command, timing, result.Process)
 		} else {
 			output = formatJSON(result)
 		}
@@ -459,6 +477,8 @@ func sendAction(term *terminal.Terminal, action input.Action) error {
 	case input.ActionMouse:
 		warnMouseMode(term, action)
 		return term.SendKeys(action.Mouse.Seq)
+	case input.ActionResize:
+		return term.Resize(action.Cols, action.Rows)
 	default:
 		return term.SendKeys(action.Bytes)
 	}
@@ -493,11 +513,12 @@ func formatJSON(result CaptureResult) string {
 	return buf.String()
 }
 
-func formatMultiJSON(results []CaptureResult, command string, timing *TimingInfo) string {
+func formatMultiJSON(results []CaptureResult, command string, timing *TimingInfo, process *terminal.ExitStatus) string {
 	multi := MultiCaptureResult{
 		Captures: results,
 		Command:  command,
 		Timing:   timing,
+		Process:  process,
 	}
 	var buf strings.Builder
 	enc := json.NewEncoder(&buf)

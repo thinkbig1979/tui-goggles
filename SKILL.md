@@ -52,7 +52,7 @@ This skill bundles `tui-goggles`. Use this path in all commands:
 | 1 | General error - invalid arguments, command failed to start |
 | 2 | Timeout - operation exceeded timeout |
 | 3 | Assertion failed - text from `-assert` was not found |
-| 4 | Command error - target command exited with non-zero status |
+| 4 | Command error - target command exited on its own with non-zero status before the capture finished |
 
 ## What This Tool Does
 
@@ -93,6 +93,7 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
 | `-trim` | false | Remove trailing blank lines |
 | `-quiet` | false | Suppress output on success |
 | `-env` | | Set env var for command (KEY=VALUE, repeatable) |
+| `-grace` | 1s | On exit, time the app gets after SIGHUP before SIGKILL (0 = kill at once) |
 
 ## JSON Output Format
 
@@ -112,9 +113,12 @@ For apps requiring graphics or advanced terminal features, use a full terminal e
     "total_ms": 1250,
     "delay_ms": 500,
     "stabilize_ms": 200
-  }
+  },
+  "process": {"ended_by": "hangup", "exit_code": 0}
 }
 ```
+
+`cols`/`rows` are the live size, so they reflect any `resize:`. `process` says how the app ended: `exited` (quit on its own before the capture finished), `hangup` (quit after tui-goggles sent SIGHUP) or `killed` (SIGKILL after the `-grace` period); `signal` names the signal if one ended it. In `-capture-each` mode `process` is on the top-level object.
 
 **Multi-capture with `-capture-each`:**
 ```json
@@ -185,6 +189,17 @@ printf 'type:"x y"\npaste:"p q" enter\n' | ~/.claude/skills/tui-capture/bin/tui-
 ```
 
 A quote that is never closed, or a bad `\x` escape, fails with exit 1 before the app starts.
+
+## Resizing and Shutdown
+
+`resize:COLSxROWS` in `-keys` resizes the terminal mid-session: the emulator is resized in place (screen contents kept) and the app gets SIGWINCH, as in a real terminal.
+
+```bash
+# Check reflow: start at 80x24, shrink, capture
+~/.claude/skills/tui-capture/bin/tui-goggles -keys "resize:60x10" -format json -- ./app
+```
+
+When the capture is done, tui-goggles ends the app the way closing a terminal window does: SIGHUP to its process group, then SIGKILL if it is still running after `-grace` (default 1s). An app that saves on SIGHUP gets to save, so you can check files it writes on exit. Use `-grace 0` for the old kill-at-once behaviour.
 
 ## Mouse
 

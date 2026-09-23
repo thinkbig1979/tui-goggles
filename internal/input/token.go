@@ -1,6 +1,10 @@
 package input
 
-import "strings"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // ActionKind identifies what an Action does.
 type ActionKind int
@@ -12,6 +16,8 @@ const (
 	ActionMouse
 	// ActionPaste writes Bytes (a bracketed paste) to the application.
 	ActionPaste
+	// ActionResize resizes the terminal to Cols x Rows.
+	ActionResize
 )
 
 // Action is one parsed -keys token.
@@ -20,6 +26,8 @@ type Action struct {
 	Token string
 	Bytes string
 	Mouse MouseAction
+	Cols  int
+	Rows  int
 }
 
 // Paste start and end markers for bracketed paste (mode 2004).
@@ -37,6 +45,10 @@ func ParseToken(tok string) (Action, error) {
 	}
 	if text, ok := cutPrefixFold(tok, "paste:"); ok {
 		return Action{Kind: ActionPaste, Token: tok, Bytes: PasteStart + text + PasteEnd}, nil
+	}
+	if size, ok := cutPrefixFold(tok, "resize:"); ok {
+		cols, rows, err := ParseSize(size)
+		return Action{Kind: ActionResize, Token: tok, Cols: cols, Rows: rows}, err
 	}
 	if m, ok, err := EncodeMouse(tok); ok {
 		return Action{Kind: ActionMouse, Token: tok, Mouse: m}, err
@@ -57,4 +69,19 @@ func cutPrefixFold(s, prefix string) (string, bool) {
 		return s[len(prefix):], true
 	}
 	return s, false
+}
+
+// ParseSize parses a terminal size of the form COLSxROWS, e.g. "100x30".
+func ParseSize(s string) (cols, rows int, err error) {
+	cs, rs, found := strings.Cut(strings.ToLower(s), "x")
+	if found {
+		cols, err = strconv.Atoi(cs)
+		if err == nil {
+			rows, err = strconv.Atoi(rs)
+		}
+	}
+	if !found || err != nil || cols < 1 || rows < 1 {
+		return 0, 0, fmt.Errorf("invalid size %q (want COLSxROWS, e.g. 100x30)", s)
+	}
+	return cols, rows, nil
 }

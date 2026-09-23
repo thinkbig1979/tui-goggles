@@ -29,7 +29,7 @@ tui-goggles [flags] -- command [args...]
 | 1 | General error - invalid arguments, command failed to start |
 | 2 | Timeout - operation exceeded timeout |
 | 3 | Assertion failed - text specified with `-assert` was not found |
-| 4 | Command error - target command exited with non-zero status |
+| 4 | Command error - target command exited on its own with non-zero status before the capture finished |
 
 ### Flags
 
@@ -54,6 +54,7 @@ tui-goggles [flags] -- command [args...]
 | `-trim` | false | Trim trailing blank lines from output |
 | `-quiet` | false | Suppress output on success (useful with `-assert`) |
 | `-env` | | Set environment variable (format: KEY=VALUE, repeatable) |
+| `-grace` | 1s | On exit, time the app gets after SIGHUP before SIGKILL (0 = kill at once) |
 
 ### Examples
 
@@ -114,6 +115,7 @@ For the `-keys` flag, use these names (space-separated):
 - **Modifiers**: `ctrl`, `alt`, `shift`, `meta` joined with `+` or `-`, e.g. `ctrl-a`, `shift+tab`, `alt+left`, `ctrl+pgup`, `ctrl+shift+right`, `ctrl+space` (xterm encoding, see SKILL.md)
 - **Mouse**: `click:X,Y[,button]`, `dblclick:`, `press:`, `release:`, `drag:X1,Y1-X2,Y2`, `move:`, `wheel-up:`/`wheel-down:`, with 0-based cells and optional modifiers (`shift+click:3,0`), sent as SGR 1006
 - **Text**: `type:"text with spaces"` types verbatim, `paste:"text"` sends a bracketed paste; quotes group, and `\t \n \r \e \s \xHH` escapes work anywhere
+- **Resize**: `resize:100x30` resizes the terminal mid-session (the app gets SIGWINCH)
 - **Literal text**: Any other string is sent as-is
 
 ### JSON Output Format
